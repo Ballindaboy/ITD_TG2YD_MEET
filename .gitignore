@@ -1,0 +1,48 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE settings
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/
+
+# Local configuration
+.env
+.env.*
+!.env.example
+
+# Sensitive information
+telegram_session.txt
+*.session
+
+# Temporary files
+tmp/
+temp/
+.DS_Store
+
+# Test files
+test_*
+create_test_folders.py
+
+# Prompt files
+Promt.md 
