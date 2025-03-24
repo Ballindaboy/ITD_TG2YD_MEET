@@ -27,10 +27,10 @@ from src.handlers.command_handler import (
     CHOOSE_FOLDER, NAVIGATE_SUBFOLDERS, CREATE_FOLDER
 )
 from src.handlers.file_handler import handle_message, handle_text, handle_file
-from src.handlers.media_handlers.photo_handler import handle_photo
-from src.handlers.media_handlers.audio_handler import audio_received
-from src.handlers.media_handlers.video_handler import video_received
-from src.handlers.media_handlers.document_handler import document_received
+from src.handlers.media_handlers import (
+    handle_photo, handle_video, handle_voice, 
+    handle_document, process_transcription, process_transcription_edit
+)
 from src.handlers.admin_handler import (
     admin, admin_menu_handler, handle_folder_path, handle_folder_permissions,
     handle_remove_folder, add_user, add_user_first_name, add_user_last_name, 
@@ -162,9 +162,9 @@ def main() -> None:
         # Обработчики текстовых сообщений и файлов
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
         application.add_handler(MessageHandler(filters.PHOTO, lambda update, context: handle_file(update, context, handle_photo)))
-        application.add_handler(MessageHandler(filters.AUDIO, lambda update, context: handle_file(update, context, audio_received)))
-        application.add_handler(MessageHandler(filters.VIDEO, lambda update, context: handle_file(update, context, video_received)))
-        application.add_handler(MessageHandler(filters.Document.ALL, lambda update, context: handle_file(update, context, document_received)))
+        application.add_handler(MessageHandler(filters.AUDIO, lambda update, context: handle_file(update, context, handle_voice)))
+        application.add_handler(MessageHandler(filters.VIDEO, lambda update, context: handle_file(update, context, handle_video)))
+        application.add_handler(MessageHandler(filters.Document.ALL, lambda update, context: handle_file(update, context, handle_document)))
         
         # Настройка параметров сессий
         # Устанавливаем время жизни сессии в секундах (по умолчанию 30 минут)
