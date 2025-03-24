@@ -249,6 +249,25 @@ async def browse_folders(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return CREATE_SUBFOLDER
     
+    if text == "✅ Добавить эту папку":
+        # Добавляем текущую папку в список разрешенных
+        success, message = add_allowed_folder(current_path)
+        
+        if success:
+            await update.message.reply_text(
+                f"✅ {message}\n\n"
+                "Хотите добавить пользователей с доступом к этой папке?",
+                reply_markup=ReplyKeyboardMarkup([["Да", "Нет"]], one_time_keyboard=True, resize_keyboard=True)
+            )
+            context.user_data["current_folder"] = current_path
+            return FOLDER_PERMISSIONS
+        else:
+            await update.message.reply_text(
+                f"❌ {message}",
+                reply_markup=ReplyKeyboardMarkup([["🔙 Назад"]], one_time_keyboard=True, resize_keyboard=True)
+            )
+            return ADMIN_MENU
+    
     # Получаем выбранную папку
     if text[0].isdigit():
         folder_idx = int(text.split(".")[0]) - 1
