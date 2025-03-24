@@ -175,7 +175,12 @@ def main() -> None:
         
         # Добавляем обработчик для создания новой встречи
         new_meeting_handler = ConversationHandler(
-            entry_points=[CommandHandler("new", new_meeting), CommandHandler("meet", new_meeting)],
+            entry_points=[
+                CommandHandler("new", new_meeting), 
+                CommandHandler("meet", new_meeting),
+                CommandHandler("switch", switch_meeting),
+                CommandHandler("meetings", switch_meeting)
+            ],
             states={
                 CHOOSE_FOLDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_category)],
                 NAVIGATE_SUBFOLDERS: [MessageHandler(filters.TEXT & ~filters.COMMAND, navigate_folders)],
@@ -187,9 +192,7 @@ def main() -> None:
         )
         application.add_handler(new_meeting_handler)
         
-        # Добавляем обработчик для просмотра и переключения между встречами
-        application.add_handler(CommandHandler("meetings", switch_meeting))
-        application.add_handler(CommandHandler("switch", switch_meeting))  # Альтернативная команда
+        # Добавляем обработчик для просмотра текущей встречи
         application.add_handler(CommandHandler("current", current_meeting))
         
         # Обработчик для завершения встречи

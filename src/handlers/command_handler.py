@@ -480,7 +480,7 @@ async def end_session_and_show_summary(update: Update, context: ContextTypes.DEF
     else:
         logger.warning(f"job_queue недоступен для отмены проверок активности для пользователя {user_id}")
 
-async def switch_meeting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def switch_meeting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обработчик команды /switch - переключение на другую встречу"""
     user_id = update.effective_user.id
     logger.info(f"Пользователь {user_id} хочет переключиться на другую встречу")
@@ -496,17 +496,39 @@ async def switch_meeting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         state_manager.clear_session(user_id)
     
     # Запускаем процесс создания новой встречи
-    # Используем return с await для правильной работы ConversationHandler
+    # Используем delayed_message для отправки сообщения после завершения предыдущей сессии
     await update.message.reply_text(
         "🔄 Переключаемся на новую встречу. Выберите папку:",
         reply_markup=ReplyKeyboardRemove()
     )
     
-    # Вызываем напрямую new_meeting для запуска нового процесса выбора папки
-    await new_meeting(update, context)
+    # Получаем список разрешенных папок для этого пользователя
+    allowed_folders = get_allowed_folders_for_user(user_id)
     
-    # Важно вернуть ConversationHandler.END, чтобы не начинать новую беседу в текущем обработчике
-    return ConversationHandler.END
+    if not allowed_folders:
+        await update.message.reply_text(
+            "❌ У вас нет доступа ни к одной папке. Обратитесь к администратору.",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        return ConversationHandler.END
+    
+    # Создаем клавиатуру для выбора папки
+    keyboard = []
+    for i, folder in enumerate(allowed_folders, 1):
+        keyboard.append([f"{i}. {folder}"])
+    
+    keyboard.append(["❌ Отмена"])
+    
+    await update.message.reply_text(
+        "👋 Выберите папку для встречи:",
+        reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
+    )
+    
+    # Сохраняем список разрешенных папок в состоянии пользователя
+    state_manager.set_data(user_id, "allowed_folders", allowed_folders)
+    
+    # Возвращаем состояние для ConversationHandler
+    return CHOOSE_FOLDER
 
 async def current_meeting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработчик команды /current - показывает информацию о текущей встрече"""
