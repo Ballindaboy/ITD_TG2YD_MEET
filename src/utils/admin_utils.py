@@ -1,6 +1,6 @@
 import json
 import logging
-from config.config import FOLDERS_FILE, USERS_FILE
+from config.config import DATA_DIR, FOLDERS_FILE, USERS_FILE
 import os
 from typing import Dict, List, Optional, Any, Tuple, Set, Union
 from datetime import datetime
