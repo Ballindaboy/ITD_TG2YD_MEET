@@ -173,9 +173,19 @@ def main() -> None:
         application.add_handler(CommandHandler("help", help_command))
         application.add_handler(CommandHandler("cancel", cancel))
         
-        # Создаем обработчик для создания новой встречи
-        application.add_handler(CommandHandler("meet", new_meeting))
-        application.add_handler(CommandHandler("new", new_meeting))  # Альтернативная команда
+        # Добавляем обработчик для создания новой встречи
+        new_meeting_handler = ConversationHandler(
+            entry_points=[CommandHandler("new", new_meeting), CommandHandler("meet", new_meeting)],
+            states={
+                CHOOSE_FOLDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_category)],
+                NAVIGATE_SUBFOLDERS: [MessageHandler(filters.TEXT & ~filters.COMMAND, navigate_folders)],
+                CREATE_FOLDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, create_folder)]
+            },
+            fallbacks=[CommandHandler("cancel", cancel)],
+            name="new_meeting_conversation",
+            persistent=False
+        )
+        application.add_handler(new_meeting_handler)
         
         # Добавляем обработчик для просмотра и переключения между встречами
         application.add_handler(CommandHandler("meetings", switch_meeting))
@@ -188,34 +198,7 @@ def main() -> None:
         # Обработчик callback-запросов (нажатий на кнопки)
         application.add_handler(CallbackQueryHandler(handle_session_callback, pattern=r'^session_'))
         
-        # Добавляем обработчик диалога выбора папки
-        conv_handler = ConversationHandler(
-            entry_points=[
-                CommandHandler("client", handle_category),
-                CallbackQueryHandler(navigate_folders, pattern=r'^folder_')
-            ],
-            states={
-                CHOOSE_FOLDER: [
-                    CallbackQueryHandler(handle_category, pattern=r'^category_'),
-                    CallbackQueryHandler(navigate_folders, pattern=r'^folder_'),
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_category)
-                ],
-                NAVIGATE_SUBFOLDERS: [
-                    CallbackQueryHandler(navigate_folders, pattern=r'^folder_'),
-                    CallbackQueryHandler(handle_category, pattern=r'^back_'),
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, navigate_folders)
-                ],
-                CREATE_FOLDER: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, create_folder)
-                ]
-            },
-            fallbacks=[CommandHandler("cancel", cancel)],
-            name="folder_conversation",
-            persistent=False
-        )
-        application.add_handler(conv_handler)
-        
-        # Обработчики текстовых сообщений
+        # Добавляем обработчики текстовых сообщений
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
         
         # Обработчики исправленной транскрипции голосовых сообщений
