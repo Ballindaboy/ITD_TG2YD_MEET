@@ -10,6 +10,12 @@ from src.utils.admin_utils import (
 )
 from src.utils.state_manager import state_manager
 from src.utils.yadisk_helper import YaDiskHelper
+from src.utils.folder_navigation import FolderNavigator
+from src.utils.config_constants import (
+    BUTTON_BACK, BUTTON_CANCEL, BUTTON_ADD_FOLDER, BUTTON_CREATE_FOLDER, BUTTON_RETURN_TO_ROOT,
+    ADMIN_WELCOME_MESSAGE, FOLDER_PERMISSIONS_PROMPT,
+    FOLDER_ADDED_SUCCESS, FOLDER_ADDED_EXISTS, USER_EMPTY_LIST
+)
 import os
 
 # Определение состояний для диалогов
@@ -26,18 +32,21 @@ SELECT_USERS = 9
 BROWSE_FOLDERS = 10
 SELECT_SUBFOLDER = 11
 CREATE_SUBFOLDER = 12
+ADMIN_ADD_USER = 13
+ADMIN_USER_FIRST_NAME = 14
+ADMIN_USER_LAST_NAME = 15
 
 logger = logging.getLogger(__name__)
 yadisk_helper = YaDiskHelper()
 
-def normalize_path(path):
-    """Нормализует путь для Яндекс.Диска"""
-    path = path.replace("disk:", "")
-    path = path.replace("//", "/")
-    path = path.rstrip("/")
-    if not path.startswith("/"):
-        path = "/" + path
-    return path
+# Создаем экземпляр навигатора по папкам
+folder_navigator = FolderNavigator(
+    yadisk_helper=yadisk_helper,
+    title="Выберите папку для добавления в список разрешенных:",
+    add_current_folder_button=True,
+    create_folder_button=True,
+    extra_buttons=[BUTTON_CANCEL]
+)
 
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обработчик команды /admin - показывает административное меню"""
@@ -672,34 +681,93 @@ async def handle_add_user(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         return ADD_USER
     
-    # Пробуем получить информацию о пользователе из чата (если доступно)
-    username = None
-    first_name = None
-    last_name = None
-    
-    chat_member = await update.effective_chat.get_member(user_id=user_id)
-    if chat_member:
-        username = chat_member.user.username
-        first_name = chat_member.user.first_name
-        last_name = chat_member.user.last_name
-    
     # Добавляем пользователя в список разрешенных
-    success, message = add_allowed_user(user_id, username, first_name, last_name)
+    # Просто передаем ID, так как остальные данные не предоставлены
+    success, message, user_data = add_allowed_user(user_id, None, None, None)
     
-    if success:
+    if not success and "заполните данные" in message:
+        # Сохраняем ID пользователя для последующих шагов
+        state_manager.set_data(update.effective_user.id, "adding_user_id", user_id)
+        state_manager.set_data(update.effective_user.id, "adding_user_data", user_data)
+        
+        # Запрашиваем имя пользователя
         await update.message.reply_text(
-            f"✅ {message}",
-            reply_markup=ReplyKeyboardMarkup([["🔙 Назад"]], one_time_keyboard=True, resize_keyboard=True)
+            f"Добавляем пользователя с ID {user_id}.\n"
+            f"Пожалуйста, введите имя пользователя:"
         )
-    else:
-        await update.message.reply_text(
-            f"❌ {message}\n\n"
-            "Попробуйте еще раз или нажмите '🔙 Назад' для возврата в меню.",
-            reply_markup=ReplyKeyboardMarkup([["🔙 Назад"]], one_time_keyboard=True, resize_keyboard=True)
-        )
+        return ADMIN_USER_FIRST_NAME
     
-    # Возвращаемся к меню администратора
-    return await admin(update, context)
+    # Обычный ответ, если данные уже есть или произошла ошибка
+    await update.message.reply_text(message)
+    
+    # Возвращаемся в меню
+    await admin(update, context)
+    return ADMIN_MENU
+
+async def add_user_first_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обрабатывает ввод имени пользователя"""
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        await update.message.reply_text("⛔ У вас нет прав администратора")
+        return ConversationHandler.END
+    
+    # Получаем имя пользователя из сообщения
+    first_name = update.message.text
+    
+    # Сохраняем имя в данных состояния
+    adding_user_data = state_manager.get_data(user_id, "adding_user_data", {})
+    adding_user_data["first_name"] = first_name
+    state_manager.set_data(user_id, "adding_user_data", adding_user_data)
+    
+    # Запрашиваем фамилию пользователя
+    await update.message.reply_text(
+        f"Имя: {first_name}\n"
+        f"Теперь введите фамилию пользователя:"
+    )
+    return ADMIN_USER_LAST_NAME
+
+async def add_user_last_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обрабатывает ввод фамилии пользователя"""
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        await update.message.reply_text("⛔ У вас нет прав администратора")
+        return ConversationHandler.END
+    
+    # Получаем фамилию пользователя из сообщения
+    last_name = update.message.text
+    
+    # Получаем ID добавляемого пользователя и данные
+    adding_user_id = state_manager.get_data(user_id, "adding_user_id")
+    adding_user_data = state_manager.get_data(user_id, "adding_user_data", {})
+    adding_user_data["last_name"] = last_name
+    
+    # Обновляем данные пользователя
+    from src.utils.admin_utils import update_user_data
+    success, message = update_user_data(
+        adding_user_id,
+        first_name=adding_user_data.get("first_name"),
+        last_name=last_name,
+        username=adding_user_data.get("username")
+    )
+    
+    # Очищаем временные данные
+    state_manager.remove_data(user_id, "adding_user_id")
+    state_manager.remove_data(user_id, "adding_user_data")
+    
+    # Отображаем результат
+    await update.message.reply_text(
+        f"✅ Пользователь добавлен:\n"
+        f"ID: {adding_user_id}\n"
+        f"Имя: {adding_user_data.get('first_name')}\n"
+        f"Фамилия: {last_name}\n"
+        f"Username: @{adding_user_data.get('username', '(нет)')}"
+    )
+    
+    # Возвращаемся в меню
+    await admin(update, context)
+    return ADMIN_MENU
 
 async def handle_remove_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обработчик удаления пользователя"""
