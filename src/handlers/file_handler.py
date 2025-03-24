@@ -94,6 +94,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE, handle
         await handle_video(update, context, file_id, file_name, session)
     elif file_type == "audio":
         # Аудио файлы также обрабатываем через handle_voice
+        logger.info(f"Обработка аудио файла через handle_voice: {file_name}")
         await handle_voice(update, context, file_id, file_name, session)
     else:
         # Для остальных типов файлов используем обработчик документов

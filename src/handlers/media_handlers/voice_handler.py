@@ -1,6 +1,7 @@
 import os
 import logging
 import tempfile
+import time
 from telegram import Update
 from telegram.ext import ContextTypes
 from src.utils.yadisk_helper import YaDiskHelper
@@ -26,8 +27,10 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE, file_
         # Скачиваем файл
         await download_telegram_file(context, file_id, tmp_path)
         
-        # Путь для сохранения на Яндекс.Диске
-        yandex_path = session.get_media_path("ogg")
+        # Добавляем уникальный идентификатор к пути файла на Яндекс.Диске
+        unique_id = int(time.time() * 1000) % 10000  # Миллисекунды модуль 10000 для уникальности
+        modified_prefix = f"{session.file_prefix}_{unique_id}"
+        yandex_path = f"{session.folder_path}/{modified_prefix}.ogg"
         
         # Определяем размер файла
         file_size = os.path.getsize(tmp_path)
@@ -37,7 +40,14 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE, file_
         logger.debug(f"Начинаем загрузку голосового сообщения: {yandex_path}")
         await status_message.edit_text(f"🔉 Загрузка голосового сообщения ({file_size_mb} МБ)...")
         
-        yadisk_helper.upload_file(tmp_path, yandex_path)
+        try:
+            yadisk_helper.upload_file(tmp_path, yandex_path)
+        except Exception as e:
+            if "уже существует" in str(e) or "already exists" in str(e):
+                logger.warning(f"Файл {yandex_path} уже существует. Пробуем загрузить с перезаписью.")
+                yadisk_helper.upload_file(tmp_path, yandex_path, overwrite=True)
+            else:
+                raise
         
         # Автоматическая расшифровка голосового сообщения
         await status_message.edit_text("🎙 Распознаю речь...")
@@ -57,7 +67,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE, file_
             
             # Показываем результат пользователю и предлагаем отредактировать при необходимости
             await status_message.edit_text(
-                f"✅ Голосовое сообщение сохранено как\n{session.file_prefix}.ogg\n\n"
+                f"✅ Голосовое сообщение сохранено как\n{modified_prefix}.ogg\n\n"
                 f"📝 Автоматическая расшифровка:\n{transcription}\n\n"
                 "Если расшифровка неточная, пришлите исправленный текст, и я обновлю отчёт:"
             )
@@ -67,7 +77,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE, file_
         else:
             # Если автоматическая расшифровка не удалась, просим пользователя ввести текст вручную
             await status_message.edit_text(
-                f"🔉 Голосовое сообщение сохранено как\n{session.file_prefix}.ogg\n\n"
+                f"🔉 Голосовое сообщение сохранено как\n{modified_prefix}.ogg\n\n"
                 "⚠️ Не удалось автоматически распознать текст.\n"
                 "Напишите расшифровку текста голосового сообщения, и я добавлю её в отчёт:"
             )
