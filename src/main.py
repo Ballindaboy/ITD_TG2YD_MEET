@@ -163,6 +163,7 @@ def main() -> None:
         # Обработчики текстовых сообщений и файлов
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
         application.add_handler(MessageHandler(filters.PHOTO, lambda update, context: handle_file(update, context, handle_photo)))
+        application.add_handler(MessageHandler(filters.VOICE, lambda update, context: handle_file(update, context, handle_voice)))
         application.add_handler(MessageHandler(filters.AUDIO, lambda update, context: handle_file(update, context, handle_voice)))
         application.add_handler(MessageHandler(filters.VIDEO, lambda update, context: handle_file(update, context, handle_video)))
         application.add_handler(MessageHandler(filters.Document.ALL, lambda update, context: handle_file(update, context, handle_document)))

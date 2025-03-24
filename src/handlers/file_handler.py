@@ -55,7 +55,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         logger.error(f"Ошибка при добавлении текста: {str(e)}", exc_info=True)
         await update.message.reply_text(f"❌ Произошла ошибка: {str(e)}")
 
-async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE, handler_func=None) -> None:
     """Обработчик получения файлов любого типа"""
     user_id = update.effective_user.id
     
@@ -80,13 +80,21 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     
     logger.info(f"Получен файл от пользователя {user_id}: {file_name} (тип: {file_type})")
     
-    # Вызываем соответствующий обработчик в зависимости от типа файла
+    # Если передан конкретный обработчик, используем его
+    if handler_func:
+        await handler_func(update, context, file_id, file_name, session)
+        return
+    
+    # Иначе выбираем обработчик в зависимости от типа файла
     if file_type == "voice":
         await handle_voice(update, context, file_id, file_name, session)
     elif file_type == "photo":
         await handle_photo(update, context, file_id, file_name, session)
     elif file_type == "video":
         await handle_video(update, context, file_id, file_name, session)
+    elif file_type == "audio":
+        # Аудио файлы также обрабатываем через handle_voice
+        await handle_voice(update, context, file_id, file_name, session)
     else:
         # Для остальных типов файлов используем обработчик документов
         await handle_document(update, context, file_id, file_name, session)
