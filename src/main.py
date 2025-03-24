@@ -1,184 +1,214 @@
 import logging
-import sys
 import os
-import atexit
 import signal
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ConversationHandler
-from telegram import Update
-from telegram.error import NetworkError, TelegramError
-from telegram.ext import ContextTypes, CallbackContext
-from config.config import TELEGRAM_TOKEN, LOG_LEVEL, LOG_FORMAT, validate_config
-from src.handlers.command_handler import (
-    start, help_command, new_meeting, handle_category, navigate_folders,
-    switch_meeting, current_meeting, cancel, create_folder,
-    CHOOSE_FOLDER, NAVIGATE_SUBFOLDERS, CREATE_FOLDER
-)
-from src.handlers.admin import (
-    admin, admin_menu_handler, handle_folder_path, handle_folder_permissions,
-    handle_remove_folder, handle_add_user, handle_remove_user, handle_select_users,
-    handle_select_folder, cancel as admin_cancel,
-    ADMIN_MENU, ADD_FOLDER, REMOVE_FOLDER, ADD_USER, REMOVE_USER,
-    FOLDER_PATH, USER_ID, FOLDER_PERMISSIONS, SELECT_FOLDER, SELECT_USERS,
-    BROWSE_FOLDERS, SELECT_SUBFOLDER, CREATE_SUBFOLDER, browse_folders,
-    select_subfolder, create_subfolder
-)
-from src.handlers.file_handler import handle_message
+import atexit
+import sys
+from contextlib import suppress
 
-# Путь к файлу блокировки
-LOCK_FILE = "/tmp/itd_meeting_bot.lock"
+# Сторонние библиотеки
+from telegram import Update
+from telegram.ext import (
+    Application, 
+    CommandHandler, 
+    CallbackQueryHandler,
+    ConversationHandler, 
+    MessageHandler, 
+    filters
+)
+from telegram.error import TelegramError, NetworkError
+
+# Внутренние модули
+from config.config import validate_config, TELEGRAM_TOKEN, DATA_DIR
+from config.logging_config import configure_logging
+from src.handlers.command_handler import start, help_command, new, cancel
+from src.handlers.file_handler import file_received
+from src.handlers.media_handlers.photo_handler import photo_received
+from src.handlers.media_handlers.audio_handler import audio_received
+from src.handlers.media_handlers.video_handler import video_received
+from src.handlers.media_handlers.document_handler import document_received
+from src.handlers.admin_handler import admin, add_folder, add_users, remove_folder, remove_users, cancel as admin_cancel
+from src.handlers.admin.states import *
+from src.handlers.admin.menu_handler import admin_menu, handle_category_choice
+from src.handlers.admin.folder_handlers import browse_folders, select_subfolder, create_subfolder
+from src.handlers.admin.user_handlers import add_users_to_folder, remove_users_from_folder
+from src.utils.folder_navigation import BROWSE_FOLDERS, SELECT_SUBFOLDER, CREATE_SUBFOLDER
+from src.utils.error_utils import handle_error
+
+# Константы для состояний разговора
+TITLE, DESCRIPTION, CATEGORY, DATE, TIME, LOCATION, RECEIVE_FILE, CONFIRMATION = range(8)
 
 # Настройка логирования
-logging.basicConfig(
-    format=LOG_FORMAT, 
-    level=LOG_LEVEL,
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler("bot.log", encoding="utf-8")
-    ]
-)
 logger = logging.getLogger(__name__)
 
-# Функция для удаления файла блокировки при завершении
-def cleanup_lock():
-    """Удаляет файл блокировки при завершении программы"""
-    try:
-        if os.path.exists(LOCK_FILE):
-            os.unlink(LOCK_FILE)
-            logger.info("Файл блокировки удален")
-    except Exception as e:
-        logger.error(f"Ошибка при удалении файла блокировки: {e}")
+# Путь к файлу блокировки
+LOCK_FILE = os.path.join(DATA_DIR, 'bot.lock')
 
-# Обработчик сигналов завершения
+def cleanup():
+    """Очистка ресурсов при завершении работы приложения"""
+    logger.info("Завершение работы приложения")
+    # Удаляем файл блокировки при выходе
+    with suppress(FileNotFoundError):
+        os.remove(LOCK_FILE)
+
 def signal_handler(sig, frame):
-    """Обрабатывает сигналы завершения"""
-    logger.info(f"Получен сигнал {sig}, завершение работы...")
-    cleanup_lock()
+    """Обработчик сигналов для корректного завершения работы"""
+    logger.info(f"Получен сигнал {sig}, завершаем работу")
+    cleanup()
     sys.exit(0)
 
-# Регистрация обработчиков сигналов
-signal.signal(signal.SIGINT, signal_handler)
-signal.signal(signal.SIGTERM, signal_handler)
+async def error_handler(update: Update, context) -> None:
+    """Глобальный обработчик ошибок для приложения"""
+    error = context.error
 
-# Регистрация функции очистки при выходе
-atexit.register(cleanup_lock)
-
-# Обработчик ошибок
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обрабатывает ошибки бота глобально"""
-    if isinstance(context.error, NetworkError):
-        logger.warning(f"Ошибка сети: {context.error}")
-        # Пытаемся уведомить пользователя, если update доступен
-        if isinstance(update, Update) and update.effective_chat:
-            try:
-                await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text="⚠️ Произошла ошибка сети. Пожалуйста, повторите действие через несколько минут."
-                )
-            except:
-                pass
-    elif isinstance(context.error, TelegramError):
-        logger.error(f"Ошибка Telegram API: {context.error}")
-        if isinstance(update, Update) and update.effective_chat:
-            try:
-                await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text="⚠️ Произошла ошибка при обработке запроса. Пожалуйста, повторите позже."
-                )
-            except:
-                pass
-    else:
-        # Для всех остальных ошибок
-        logger.error(f"Необработанная ошибка: {context.error}", exc_info=True)
-        if isinstance(update, Update) and update.effective_chat:
-            try:
-                await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text="⚠️ Произошла непредвиденная ошибка. Пожалуйста, сообщите администратору."
-                )
-            except:
-                pass
+    # Логирование ошибки
+    logger.error(f"Ошибка в обработчике: {context.error}", exc_info=True)
+    
+    # Обработка сетевых ошибок
+    if isinstance(error, NetworkError):
+        logger.warning(f"Ошибка сети: {error}")
+        await handle_error(update, error, context.bot)
+        return
+    
+    # Обработка ошибок Telegram API
+    if isinstance(error, TelegramError):
+        logger.error(f"Ошибка Telegram API: {error}")
+        await handle_error(update, error, context.bot)
+        return
+    
+    # Обработка всех остальных ошибок
+    await handle_error(update, error, context.bot)
 
 def main() -> None:
-    """Запуск бота"""
+    """Основная функция для запуска бота"""
+    # Проверка существования файла блокировки
+    if os.path.exists(LOCK_FILE):
+        logger.warning(f"Файл блокировки {LOCK_FILE} существует. Возможно, бот уже запущен.")
+        lock_file_age = time.time() - os.path.getmtime(LOCK_FILE)
+        if lock_file_age > 3600:  # Если файл старше часа, то, вероятно, он остался от предыдущего запуска
+            logger.info(f"Файл блокировки старше часа ({lock_file_age:.1f} сек). Удаляем его.")
+            os.remove(LOCK_FILE)
+        else:
+            logger.error("Выход, т.к. бот уже запущен.")
+            return
+
+    # Создание файла блокировки
+    with open(LOCK_FILE, 'w') as f:
+        f.write(str(os.getpid()))
+    
+    # Регистрация обработчиков сигналов и функции очистки
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    atexit.register(cleanup)
+    
     try:
-        # Проверка наличия файла блокировки
-        if os.path.exists(LOCK_FILE):
-            # Проверяем, работает ли процесс, создавший файл блокировки
-            try:
-                with open(LOCK_FILE, 'r') as lock_file:
-                    pid = int(lock_file.read().strip())
-                
-                # Проверяем, существует ли процесс с таким PID
-                os.kill(pid, 0)  # Не отправляет сигнал, но проверяет существование процесса
-                
-                logger.error(f"Бот уже запущен (PID: {pid}). Завершение работы.")
-                sys.exit(1)
-            except (ProcessLookupError, ValueError):
-                # Процесс не существует или файл блокировки поврежден
-                logger.warning("Найден недействительный файл блокировки. Перезапись...")
-        
-        # Создаем файл блокировки
-        with open(LOCK_FILE, 'w') as lock_file:
-            lock_file.write(str(os.getpid()))
-        
-        logger.info(f"Создан файл блокировки (PID: {os.getpid()})")
-        
         # Проверка конфигурации
         validate_config()
         
-        logger.info("Запуск бота")
+        # Настройка приложения Telegram
         application = Application.builder().token(TELEGRAM_TOKEN).build()
         
-        # Регистрация обработчика ошибок
+        # Регистрация глобального обработчика ошибок
         application.add_error_handler(error_handler)
         
-        # Регистрация обработчиков команд
+        # Команды для всех пользователей
         application.add_handler(CommandHandler("start", start))
         application.add_handler(CommandHandler("help", help_command))
-        application.add_handler(CommandHandler("switch", switch_meeting))
-        application.add_handler(CommandHandler("current", current_meeting))
         
-        # Обработчик создания новой встречи
-        new_meeting_handler = ConversationHandler(
-            entry_points=[CommandHandler("new", new_meeting)],
+        # Обработчик команды для создания нового собрания
+        conv_handler = ConversationHandler(
+            entry_points=[CommandHandler("new", new)],
             states={
-                CHOOSE_FOLDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_category)],
-                NAVIGATE_SUBFOLDERS: [MessageHandler(filters.TEXT & ~filters.COMMAND, navigate_folders)],
-                CREATE_FOLDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, create_folder)]
+                TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, lambda update, context: new(update, context, TITLE))],
+                DESCRIPTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, lambda update, context: new(update, context, DESCRIPTION))],
+                CATEGORY: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, lambda update, context: new(update, context, CATEGORY)),
+                    CallbackQueryHandler(lambda update, context: new(update, context, CATEGORY), pattern=r"^category_")
+                ],
+                DATE: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, lambda update, context: new(update, context, DATE)),
+                    CallbackQueryHandler(lambda update, context: new(update, context, DATE), pattern=r"^date_")
+                ],
+                TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, lambda update, context: new(update, context, TIME))],
+                LOCATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, lambda update, context: new(update, context, LOCATION))],
+                RECEIVE_FILE: [
+                    MessageHandler(filters.PHOTO, photo_received),
+                    MessageHandler(filters.AUDIO, audio_received),
+                    MessageHandler(filters.VIDEO, video_received),
+                    MessageHandler(filters.Document.ALL, document_received),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, file_received),
+                    CallbackQueryHandler(lambda update, context: new(update, context, CONFIRMATION), pattern=r"^confirm$")
+                ],
+                CONFIRMATION: [
+                    CallbackQueryHandler(lambda update, context: new(update, context, CONFIRMATION), pattern=r"^confirm$"),
+                    CallbackQueryHandler(lambda update, context: new(update, context, RECEIVE_FILE), pattern=r"^back$")
+                ],
             },
-            fallbacks=[CommandHandler("cancel", cancel)]
+            fallbacks=[CommandHandler("cancel", cancel)],
         )
-        application.add_handler(new_meeting_handler)
+        application.add_handler(conv_handler)
         
-        # Обработчик административных команд
-        admin_handler = ConversationHandler(
+        # Административные команды
+        admin_conv_handler = ConversationHandler(
             entry_points=[CommandHandler("admin", admin)],
             states={
-                ADMIN_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_menu_handler)],
-                FOLDER_PATH: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_folder_path)],
-                FOLDER_PERMISSIONS: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_folder_permissions)],
-                SELECT_FOLDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_select_folder)],
-                SELECT_USERS: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_select_users)],
-                REMOVE_FOLDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_remove_folder)],
-                ADD_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_add_user)],
-                REMOVE_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_remove_user)],
-                BROWSE_FOLDERS: [MessageHandler(filters.TEXT & ~filters.COMMAND, browse_folders)],
-                SELECT_SUBFOLDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, select_subfolder)],
-                CREATE_SUBFOLDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, create_subfolder)]
+                ADMIN_MENU: [
+                    CallbackQueryHandler(handle_category_choice, pattern=r"^category_")
+                ],
+                ADMIN_ADD_FOLDER: [
+                    CallbackQueryHandler(browse_folders, pattern=r"^browse_folders$"),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, add_folder),
+                    CallbackQueryHandler(admin_menu, pattern=r"^back_to_menu$")
+                ],
+                ADMIN_ADD_USERS: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, add_users),
+                    CallbackQueryHandler(admin_menu, pattern=r"^back_to_menu$")
+                ],
+                ADMIN_REMOVE_FOLDER: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, remove_folder),
+                    CallbackQueryHandler(admin_menu, pattern=r"^back_to_menu$")
+                ],
+                ADMIN_REMOVE_USERS: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, remove_users),
+                    CallbackQueryHandler(admin_menu, pattern=r"^back_to_menu$")
+                ],
+                BROWSE_FOLDERS: [
+                    CallbackQueryHandler(select_subfolder, pattern=r"^select_subfolder:"),
+                    CallbackQueryHandler(create_subfolder, pattern=r"^create_subfolder$"),
+                    CallbackQueryHandler(add_users_to_folder, pattern=r"^add_folder$"),
+                    CallbackQueryHandler(browse_folders, pattern=r"^up$"),
+                    CallbackQueryHandler(admin_menu, pattern=r"^back_to_menu$")
+                ],
+                SELECT_SUBFOLDER: [
+                    CallbackQueryHandler(browse_folders, pattern=r"^back_to_folders$")
+                ],
+                CREATE_SUBFOLDER: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, create_subfolder),
+                    CallbackQueryHandler(browse_folders, pattern=r"^back_to_folders$")
+                ],
+                ADMIN_ADD_USERS_TO_FOLDER: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, add_users_to_folder),
+                    CallbackQueryHandler(browse_folders, pattern=r"^back_to_folders$")
+                ],
+                ADMIN_REMOVE_USERS_FROM_FOLDER: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, remove_users_from_folder),
+                    CallbackQueryHandler(browse_folders, pattern=r"^back_to_folders$")
+                ]
             },
             fallbacks=[CommandHandler("cancel", admin_cancel)]
         )
-        application.add_handler(admin_handler)
+        application.add_handler(admin_conv_handler)
         
-        # Обработчик всех остальных сообщений (текст и файлы)
-        application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
-        
-        logger.info("Бот запущен и готов к работе")
-        application.run_polling()
-        
+        # Запуск бота
+        logger.info("Бот запущен")
+        application.run_polling(drop_pending_updates=True)
+    
     except Exception as e:
-        logger.error(f"Ошибка при запуске бота: {str(e)}", exc_info=True)
-        exit(1)
+        logger.critical(f"Критическая ошибка при запуске бота: {e}", exc_info=True)
+        cleanup()
 
 if __name__ == "__main__":
+    # Настраиваем логирование
+    configure_logging()
+    
+    import time
     main() 
