@@ -21,13 +21,6 @@ LOG_FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 # Настройки загрузки
 UPLOAD_DIR = os.getenv('UPLOAD_DIR', 'Telegram_Bot_Uploads')
 
-# Корневые директории на Яндекс.Диске
-ROOT_DIRS = {
-    "suppliers": "TD.Equipment.Suppliers",
-    "clients": "TD.Equipment.Clients",
-    "offers": "TD.Equipment.Offers"
-}
-
 # Файлы с информацией о разрешенных папках и пользователях
 DATA_DIR = Path('data')
 FOLDERS_FILE = DATA_DIR / 'allowed_folders.json'

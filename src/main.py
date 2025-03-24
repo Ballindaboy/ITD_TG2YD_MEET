@@ -11,13 +11,14 @@ from config.config import TELEGRAM_TOKEN, LOG_LEVEL, LOG_FORMAT, validate_config
 from src.handlers.command_handler import (
     start, help_command, new_meeting, handle_category, navigate_folders,
     switch_meeting, current_meeting, cancel, create_folder,
-    CHOOSE_CATEGORY, NAVIGATE_FOLDERS, CREATE_FOLDER
+    CHOOSE_FOLDER, NAVIGATE_SUBFOLDERS, CREATE_FOLDER
 )
 from src.handlers.admin_handler import (
-    admin, admin_menu_handler, handle_category_choice, handle_folder_path,
-    handle_remove_folder, handle_add_user, handle_remove_user, cancel as admin_cancel,
-    ADMIN_MENU, ADD_FOLDER, REMOVE_FOLDER, ADD_USER, REMOVE_USER, CHOOSE_CATEGORY as ADMIN_CHOOSE_CATEGORY,
-    FOLDER_PATH, USER_ID
+    admin, admin_menu_handler, handle_folder_path, handle_folder_permissions,
+    handle_remove_folder, handle_add_user, handle_remove_user, handle_select_users,
+    handle_select_folder, cancel as admin_cancel,
+    ADMIN_MENU, ADD_FOLDER, REMOVE_FOLDER, ADD_USER, REMOVE_USER,
+    FOLDER_PATH, USER_ID, FOLDER_PERMISSIONS, SELECT_FOLDER, SELECT_USERS
 )
 from src.handlers.file_handler import handle_message
 
@@ -139,8 +140,8 @@ def main() -> None:
         new_meeting_handler = ConversationHandler(
             entry_points=[CommandHandler("new", new_meeting)],
             states={
-                CHOOSE_CATEGORY: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_category)],
-                NAVIGATE_FOLDERS: [MessageHandler(filters.TEXT & ~filters.COMMAND, navigate_folders)],
+                CHOOSE_FOLDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_category)],
+                NAVIGATE_SUBFOLDERS: [MessageHandler(filters.TEXT & ~filters.COMMAND, navigate_folders)],
                 CREATE_FOLDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, create_folder)]
             },
             fallbacks=[CommandHandler("cancel", cancel)]
@@ -152,8 +153,10 @@ def main() -> None:
             entry_points=[CommandHandler("admin", admin)],
             states={
                 ADMIN_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_menu_handler)],
-                ADMIN_CHOOSE_CATEGORY: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_category_choice)],
                 FOLDER_PATH: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_folder_path)],
+                FOLDER_PERMISSIONS: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_folder_permissions)],
+                SELECT_FOLDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_select_folder)],
+                SELECT_USERS: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_select_users)],
                 REMOVE_FOLDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_remove_folder)],
                 ADD_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_add_user)],
                 REMOVE_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_remove_user)]

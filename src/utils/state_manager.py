@@ -6,8 +6,8 @@ logger = logging.getLogger(__name__)
 
 class SessionState:
     """Класс для хранения данных о текущей сессии встречи"""
-    def __init__(self, category: str, folder_path: str, folder_name: str):
-        self.category = category
+    def __init__(self, root_folder: str, folder_path: str, folder_name: str):
+        self.root_folder = root_folder
         self.folder_path = folder_path
         self.folder_name = folder_name
         self.timestamp = get_current_timestamp()

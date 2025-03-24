@@ -3,20 +3,14 @@ from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import ContextTypes, ConversationHandler
 from src.utils.state_manager import state_manager
 from src.utils.yadisk_helper import YaDiskHelper
+from src.utils.admin_utils import load_allowed_folders, get_allowed_folders_for_user, is_folder_allowed_for_user
 import os
 
 logger = logging.getLogger(__name__)
 yadisk_helper = YaDiskHelper()
 
 # Определение стадий диалога
-CHOOSE_CATEGORY, NAVIGATE_FOLDERS, CREATE_FOLDER = range(3)
-
-# Пути к папкам категорий
-CATEGORY_PATHS = {
-    "suppliers": "/TD/TD.Equipment.Suppliers",
-    "clients": "/TD/TD.Equipment.Clients",
-    "offers": "/TD/TD.Equipment.Offers"
-}
+CHOOSE_FOLDER, NAVIGATE_SUBFOLDERS, CREATE_FOLDER = range(3)
 
 def normalize_path(path):
     """Нормализует путь для Яндекс.Диска"""
@@ -58,126 +52,37 @@ async def new_meeting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     user_id = update.effective_user.id
     logger.info(f"Пользователь {user_id} начинает новую встречу")
     
-    # Создаем клавиатуру для выбора категории
-    keyboard = [
-        ["1. Поставщики (TD.Equipment.Suppliers)"],
-        ["2. Клиенты (TD.Equipment.Clients)"],
-        ["3. Ценовые предложения (TD.Equipment.Offers)"]
-    ]
+    # Получаем список разрешенных папок для этого пользователя
+    allowed_folders = get_allowed_folders_for_user(user_id)
     
-    await update.message.reply_text(
-        "👋 Выберите категорию встречи:",
-        reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
-    )
-    
-    return CHOOSE_CATEGORY
-
-async def handle_category(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Обрабатывает выбор категории"""
-    user_id = update.effective_user.id
-    text = update.message.text
-    
-    # Определяем категорию
-    category = None
-    if "1" in text or "Поставщик" in text or "Suppliers" in text:
-        category = "suppliers"
-        category_name = "Поставщики"
-    elif "2" in text or "Клиент" in text or "Clients" in text:
-        category = "clients"
-        category_name = "Клиенты"
-    elif "3" in text or "Ценов" in text or "Offers" in text:
-        category = "offers"
-        category_name = "Ценовые предложения"
-    else:
+    if not allowed_folders:
         await update.message.reply_text(
-            "❌ Пожалуйста, выберите категорию из предложенных вариантов."
-        )
-        return CHOOSE_CATEGORY
-    
-    logger.info(f"Пользователь {user_id} выбрал категорию: {category}")
-    
-    # Сохраняем выбранную категорию
-    state_manager.set_data(user_id, "category", category)
-    state_manager.set_data(user_id, "category_name", category_name)
-    
-    # Путь к выбранной категории
-    current_path = CATEGORY_PATHS[category]
-    state_manager.set_data(user_id, "current_path", current_path)
-    
-    # Получаем список папок в выбранной категории
-    try:
-        logger.info(f"Ищем папки в директории '{current_path}'")
-        
-        # Проверяем существование директории
-        if not yadisk_helper.disk.exists(current_path):
-            logger.error(f"Директория '{current_path}' не существует")
-            await update.message.reply_text(
-                f"❌ Директория '{current_path}' не существует.",
-                reply_markup=ReplyKeyboardRemove()
-            )
-            return ConversationHandler.END
-        
-        items = list(yadisk_helper.disk.listdir(current_path))
-        logger.info(f"Найдено {len(items)} элементов в директории")
-        
-        folders = [item for item in items if item.type == "dir"]
-        logger.info(f"Из них {len(folders)} папок")
-        
-        if not folders:
-            await update.message.reply_text(
-                f"📂 В категории {category_name} нет папок.",
-                reply_markup=ReplyKeyboardRemove()
-            )
-            return ConversationHandler.END
-        
-        # Сохраняем список папок
-        state_manager.set_data(user_id, "folders", folders)
-        
-        # Формируем клавиатуру
-        keyboard = []
-        message = f"📂 Папки в категории {category_name}:\n\n"
-        
-        # Ограничиваем количество папок в одном сообщении
-        MAX_FOLDERS_PER_MESSAGE = 20
-        
-        # Формируем клавиатуру
-        for i, folder in enumerate(folders, 1):
-            folder_name = folder.name
-            keyboard.append([f"{i}. {folder_name}"])
-            
-            # Добавляем папку в сообщение только если не превышаем лимит
-            if i <= MAX_FOLDERS_PER_MESSAGE:
-                message += f"{i}. 📁 {folder_name}\n"
-        
-        # Если папок больше, чем MAX_FOLDERS_PER_MESSAGE, добавляем уведомление
-        if len(folders) > MAX_FOLDERS_PER_MESSAGE:
-            message += f"\n... и еще {len(folders) - MAX_FOLDERS_PER_MESSAGE} папок.\n"
-            message += "Выберите номер папки из клавиатуры ниже.\n"
-        
-        keyboard.append(["📁 Создать папку"])
-        keyboard.append(["❌ Отмена"])
-        
-        await update.message.reply_text(
-            message,
-            reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
-        )
-        
-        return NAVIGATE_FOLDERS
-        
-    except Exception as e:
-        logger.error(f"Ошибка при получении списка папок: {str(e)}", exc_info=True)
-        await update.message.reply_text(
-            f"❌ Произошла ошибка при получении списка папок: {str(e)}",
+            "❌ У вас нет доступа ни к одной папке. Обратитесь к администратору.",
             reply_markup=ReplyKeyboardRemove()
         )
         return ConversationHandler.END
+    
+    # Создаем клавиатуру для выбора папки
+    keyboard = []
+    for i, folder in enumerate(allowed_folders, 1):
+        keyboard.append([f"{i}. {folder}"])
+    
+    keyboard.append(["❌ Отмена"])
+    
+    await update.message.reply_text(
+        "👋 Выберите папку для встречи:",
+        reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
+    )
+    
+    # Сохраняем список разрешенных папок в состоянии пользователя
+    state_manager.set_data(user_id, "allowed_folders", allowed_folders)
+    
+    return CHOOSE_FOLDER
 
-async def navigate_folders(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def handle_category(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обрабатывает выбор папки"""
     user_id = update.effective_user.id
     text = update.message.text
-    category = state_manager.get_data(user_id, "category")
-    category_name = state_manager.get_data(user_id, "category_name")
     
     if text == "❌ Отмена":
         await update.message.reply_text(
@@ -186,12 +91,117 @@ async def navigate_folders(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         )
         return ConversationHandler.END
     
-    if text == "📁 Создать папку":
+    # Получаем выбранную папку
+    if text[0].isdigit():
+        folder_idx = int(text.split(".")[0]) - 1
+        allowed_folders = state_manager.get_data(user_id, "allowed_folders")
+        
+        if 0 <= folder_idx < len(allowed_folders):
+            selected_folder = allowed_folders[folder_idx]
+            
+            logger.info(f"Пользователь {user_id} выбрал папку: {selected_folder}")
+            
+            # Сохраняем выбранную папку
+            state_manager.set_data(user_id, "selected_folder", selected_folder)
+            
+            # Получаем список подпапок или создаем сессию сразу
+            try:
+                # Проверяем существование директории
+                if not yadisk_helper.disk.exists(selected_folder):
+                    # Создаем папку, если она не существует
+                    yadisk_helper.disk.mkdir(selected_folder)
+                    logger.info(f"Создана папка '{selected_folder}'")
+                
+                # Получаем список подпапок
+                items = list(yadisk_helper.disk.listdir(selected_folder))
+                logger.info(f"Найдено {len(items)} элементов в директории")
+                
+                folders = [item for item in items if item.type == "dir"]
+                logger.info(f"Из них {len(folders)} папок")
+                
+                if not folders:
+                    # Если подпапок нет, создаем сессию прямо в выбранной папке
+                    return await start_session(update, context, selected_folder, selected_folder)
+                
+                # Сохраняем список подпапок
+                state_manager.set_data(user_id, "folders", folders)
+                
+                # Формируем клавиатуру
+                keyboard = []
+                message = f"📂 Подпапки в '{selected_folder}':\n\n"
+                
+                # Ограничиваем количество папок в одном сообщении
+                MAX_FOLDERS_PER_MESSAGE = 20
+                
+                # Формируем клавиатуру
+                for i, folder in enumerate(folders, 1):
+                    folder_name = folder.name
+                    keyboard.append([f"{i}. {folder_name}"])
+                    
+                    # Добавляем папку в сообщение только если не превышаем лимит
+                    if i <= MAX_FOLDERS_PER_MESSAGE:
+                        message += f"{i}. 📁 {folder_name}\n"
+                
+                # Если папок больше, чем MAX_FOLDERS_PER_MESSAGE, добавляем уведомление
+                if len(folders) > MAX_FOLDERS_PER_MESSAGE:
+                    message += f"\n... и еще {len(folders) - MAX_FOLDERS_PER_MESSAGE} папок.\n"
+                    message += "Выберите номер папки из клавиатуры ниже.\n"
+                
+                # Добавляем опцию создания сессии в текущей папке
+                keyboard.append(["📝 Использовать текущую папку"])
+                keyboard.append(["📁 Создать подпапку"])
+                keyboard.append(["❌ Отмена"])
+                
+                await update.message.reply_text(
+                    message,
+                    reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
+                )
+                
+                return NAVIGATE_SUBFOLDERS
+                
+            except Exception as e:
+                logger.error(f"Ошибка при получении списка папок: {str(e)}", exc_info=True)
+                await update.message.reply_text(
+                    f"❌ Произошла ошибка при получении списка папок: {str(e)}",
+                    reply_markup=ReplyKeyboardRemove()
+                )
+                return ConversationHandler.END
+        else:
+            await update.message.reply_text(
+                "❌ Неверный номер папки",
+                reply_markup=ReplyKeyboardRemove()
+            )
+            return ConversationHandler.END
+    else:
         await update.message.reply_text(
-            "📁 Введите название новой папки:",
+            "❌ Пожалуйста, выберите папку из предложенного списка",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        return CHOOSE_FOLDER
+
+async def navigate_folders(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обрабатывает выбор подпапки"""
+    user_id = update.effective_user.id
+    text = update.message.text
+    selected_folder = state_manager.get_data(user_id, "selected_folder")
+    
+    if text == "❌ Отмена":
+        await update.message.reply_text(
+            "❌ Создание встречи отменено",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        return ConversationHandler.END
+    
+    if text == "📁 Создать подпапку":
+        await update.message.reply_text(
+            "📁 Введите название новой подпапки:",
             reply_markup=ReplyKeyboardRemove()
         )
         return CREATE_FOLDER
+    
+    if text == "📝 Использовать текущую папку":
+        # Создаем сессию в выбранной папке
+        return await start_session(update, context, selected_folder, selected_folder)
     
     try:
         # Проверяем, выбрал ли пользователь папку из списка
@@ -200,12 +210,12 @@ async def navigate_folders(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             folders = state_manager.get_data(user_id, "folders")
             
             if 0 <= folder_idx < len(folders):
-                selected_folder = folders[folder_idx]
-                folder_path = normalize_path(selected_folder.path)
-                folder_name = selected_folder.name
+                selected_subfolder = folders[folder_idx]
+                folder_path = normalize_path(selected_subfolder.path)
+                folder_name = selected_subfolder.name
                 
-                # Создаем сессию в выбранной папке
-                return await start_session(update, context, category, folder_path, folder_name)
+                # Создаем сессию в выбранной подпапке
+                return await start_session(update, context, selected_folder, folder_path)
             else:
                 await update.message.reply_text(
                     "❌ Неверный номер папки",
@@ -220,15 +230,57 @@ async def navigate_folders(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         )
         return ConversationHandler.END
 
-async def start_session(update: Update, context: ContextTypes.DEFAULT_TYPE, category: str, folder_path: str, folder_name: str) -> int:
+async def create_folder(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Создает новую подпапку"""
+    user_id = update.effective_user.id
+    text = update.message.text
+    selected_folder = state_manager.get_data(user_id, "selected_folder")
+    
+    # Проверяем название папки
+    if not text or text.isspace():
+        await update.message.reply_text(
+            "❌ Название папки не может быть пустым",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        return ConversationHandler.END
+    
+    # Создаем путь к новой папке
+    new_folder_path = f"{selected_folder}/{text}"
+    
+    try:
+        # Проверяем, существует ли уже такая папка
+        if yadisk_helper.disk.exists(new_folder_path):
+            await update.message.reply_text(
+                f"❌ Папка '{text}' уже существует",
+                reply_markup=ReplyKeyboardRemove()
+            )
+            return ConversationHandler.END
+        
+        # Создаем папку
+        yadisk_helper.disk.mkdir(new_folder_path)
+        logger.info(f"Создана папка '{new_folder_path}'")
+        
+        # Создаем сессию в новой папке
+        return await start_session(update, context, selected_folder, new_folder_path)
+        
+    except Exception as e:
+        logger.error(f"Ошибка при создании папки: {str(e)}", exc_info=True)
+        await update.message.reply_text(
+            f"❌ Произошла ошибка при создании папки: {str(e)}",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        return ConversationHandler.END
+
+async def start_session(update: Update, context: ContextTypes.DEFAULT_TYPE, root_folder: str, folder_path: str) -> int:
     """Начинает сессию встречи"""
     from src.utils.state_manager import SessionState
     
     user_id = update.effective_user.id
+    folder_name = os.path.basename(folder_path)
     
     try:
         # Создаем сессию
-        session = SessionState(category, folder_path, folder_name)
+        session = SessionState(root_folder, folder_path, folder_name)
         state_manager.set_session(user_id, session)
         
         # Создаем текстовый файл для встречи
@@ -236,8 +288,7 @@ async def start_session(update: Update, context: ContextTypes.DEFAULT_TYPE, cate
         
         await update.message.reply_text(
             f"🆕 Создана новая встреча:\n"
-            f"Категория: {state_manager.get_data(user_id, 'category_name')}\n"
-            f"Папка: {folder_name}\n"
+            f"Папка: {folder_path}\n"
             f"Файл: {session.get_txt_filename()}\n\n"
             f"✍️ Можете отправлять текст, голос, фото или видео.\n"
             f"Для завершения встречи используйте /switch",
@@ -249,125 +300,55 @@ async def start_session(update: Update, context: ContextTypes.DEFAULT_TYPE, cate
     except Exception as e:
         logger.error(f"Ошибка при создании сессии: {str(e)}", exc_info=True)
         await update.message.reply_text(
-            "❌ Произошла ошибка при создании сессии",
+            f"❌ Произошла ошибка при создании сессии: {str(e)}",
             reply_markup=ReplyKeyboardRemove()
         )
         return ConversationHandler.END
 
 async def switch_meeting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Переключается на другую встречу"""
+    """Обработчик команды /switch - переключение на другую встречу"""
     user_id = update.effective_user.id
-    session = state_manager.get_session(user_id)
+    logger.info(f"Пользователь {user_id} хочет переключиться на другую встречу")
     
+    # Проверяем, есть ли активная сессия
+    session = state_manager.get_session(user_id)
     if session:
-        # Запоминаем данные о завершенной встрече для информационного сообщения
-        completed_folder_name = session.folder_name
-        
         # Завершаем текущую сессию
         state_manager.clear_session(user_id)
-        
-        # Создаем клавиатуру с кнопкой новой встречи
-        keyboard = [["🆕 Начать новую встречу"]]
-        
         await update.message.reply_text(
-            "🔚 Встреча завершена.\n"
-            f"Файлы сохранены в {completed_folder_name}.",
-            reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
+            "✅ Текущая встреча завершена"
         )
-    else:
-        # Создаем клавиатуру с кнопкой новой встречи
-        keyboard = [["🆕 Начать новую встречу"]]
-        
-        await update.message.reply_text(
-            "❌ Нет активной встречи.",
-            reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
-        )
+    
+    # Начинаем новую встречу
+    return await new_meeting(update, context)
 
 async def current_meeting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Показывает информацию о текущей встрече"""
+    """Обработчик команды /current - показывает информацию о текущей встрече"""
     user_id = update.effective_user.id
-    session = state_manager.get_session(user_id)
+    logger.info(f"Пользователь {user_id} запросил информацию о текущей встрече")
     
+    # Проверяем, есть ли активная сессия
+    session = state_manager.get_session(user_id)
     if session:
-        category_name = ""
-        if session.category == "suppliers":
-            category_name = "Поставщики"
-        elif session.category == "clients":
-            category_name = "Клиенты"
-        elif session.category == "offers":
-            category_name = "Ценовые предложения"
-            
         await update.message.reply_text(
-            f"📋 Текущая встреча:\n"
-            f"Категория: {category_name}\n"
-            f"Папка: {session.folder_name}\n"
-            f"Файл: {session.get_txt_filename()}"
+            f"📝 Текущая встреча:\n"
+            f"Папка: {session.folder_path}\n"
+            f"Файл: {session.get_txt_filename()}\n\n"
+            f"✍️ Можете отправлять текст, голос, фото или видео."
         )
     else:
-        # Создаем клавиатуру с кнопкой новой встречи
-        keyboard = [["🆕 Начать новую встречу"]]
-        
         await update.message.reply_text(
-            "❌ Нет активной встречи.",
-            reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
+            "❌ У вас нет активной встречи. Используйте /new, чтобы начать новую встречу."
         )
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Отменяет текущий диалог"""
+    """Отменяет создание встречи"""
+    user_id = update.effective_user.id
+    logger.info(f"Пользователь {user_id} отменил создание встречи")
+    
     await update.message.reply_text(
-        "❌ Операция отменена.",
+        "❌ Создание встречи отменено",
         reply_markup=ReplyKeyboardRemove()
     )
-    return ConversationHandler.END
-
-async def create_folder(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Обрабатывает создание новой папки"""
-    user_id = update.effective_user.id
-    folder_name = update.message.text.strip()
-    category = state_manager.get_data(user_id, "category")
-    current_path = state_manager.get_data(user_id, "current_path")
     
-    try:
-        # Проверяем длину имени папки
-        if len(folder_name) < 2:
-            await update.message.reply_text(
-                "❌ Название папки должно содержать минимум 2 символа. Попробуйте снова:"
-            )
-            return CREATE_FOLDER
-        
-        # Создаем новую папку
-        logger.info(f"Создание новой папки '{folder_name}' в пути '{current_path}'")
-        
-        # Получаем полный путь
-        folder_path = f"{current_path}/{folder_name}"
-        folder_path = normalize_path(folder_path)
-        
-        # Создаем папку на Яндекс.Диске
-        if not yadisk_helper.disk.exists(folder_path):
-            yadisk_helper.disk.mkdir(folder_path)
-            logger.info(f"Папка создана: {folder_path}")
-            
-            await update.message.reply_text(
-                f"✅ Папка '{folder_name}' успешно создана.\n"
-                f"Теперь создаем встречу в этой папке."
-            )
-            
-            # Создаем сессию в новой папке
-            return await start_session(update, context, category, folder_path, folder_name)
-        else:
-            logger.warning(f"Папка уже существует: {folder_path}")
-            await update.message.reply_text(
-                f"⚠️ Папка с именем '{folder_name}' уже существует.\n"
-                f"Создаем встречу в существующей папке."
-            )
-            return await start_session(update, context, category, folder_path, folder_name)
-            
-    except Exception as e:
-        logger.error(f"Ошибка при создании папки: {str(e)}", exc_info=True)
-        await update.message.reply_text(
-            f"❌ Ошибка при создании папки: {str(e)}.\n"
-            f"Пожалуйста, попробуйте снова или выберите существующую папку.",
-            reply_markup=ReplyKeyboardRemove()
-        )
-        # Возвращаемся к выбору категории
-        return await new_meeting(update, context) 
+    return ConversationHandler.END 
