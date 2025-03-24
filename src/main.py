@@ -13,7 +13,7 @@ from src.handlers.command_handler import (
     switch_meeting, current_meeting, cancel, create_folder,
     CHOOSE_FOLDER, NAVIGATE_SUBFOLDERS, CREATE_FOLDER
 )
-from src.handlers.admin_handler import (
+from src.handlers.admin import (
     admin, admin_menu_handler, handle_folder_path, handle_folder_permissions,
     handle_remove_folder, handle_add_user, handle_remove_user, handle_select_users,
     handle_select_folder, cancel as admin_cancel,
