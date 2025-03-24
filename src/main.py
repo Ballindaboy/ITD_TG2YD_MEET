@@ -6,14 +6,6 @@ import time
 import sys
 import argparse
 from contextlib import suppress
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    MessageHandler,
-    filters,
-    ConversationHandler,
-    CallbackQueryHandler
-)
 
 # Сторонние библиотеки
 from telegram import Update
@@ -28,18 +20,13 @@ from telegram.ext import (
 from telegram.error import TelegramError, NetworkError
 
 # Внутренние модули
-from config.config import validate_config, TELEGRAM_TOKEN, DATA_DIR, ADMIN_USER_ID
+from config.config import validate_config, TELEGRAM_TOKEN, DATA_DIR, ADMIN_IDS
 from config.logging_config import configure_logging
 from src.handlers.command_handler import (
     start, help_command, new_meeting, handle_category, navigate_folders,
     switch_meeting, current_meeting, cancel, create_folder,
     handle_session_callback, end_session_and_show_summary,
-    CHOOSE_FOLDER, NAVIGATE_SUBFOLDERS, CREATE_FOLDER,
-    start_command,
-    help_command,
-    cancel_command,
-    session_command,
-    select_client_command
+    CHOOSE_FOLDER, NAVIGATE_SUBFOLDERS, CREATE_FOLDER
 )
 from src.handlers.file_handler import handle_message, handle_text, handle_file
 from src.handlers.media_handlers.voice_handler import process_transcription, process_transcription_edit
@@ -57,7 +44,7 @@ from src.handlers.admin_handler import (
     select_subfolder, create_subfolder, ADMIN_USER_FIRST_NAME, ADMIN_USER_LAST_NAME,
     ADMIN_ADD_USER
 )
-from src.utils.error_utils import error_handler
+from src.utils.error_utils import error_handler, handle_error
 from src.utils.session_utils import SESSION_TIMEOUT
 from src.utils.yadisk_helper import YaDiskHelper
 
@@ -86,7 +73,7 @@ def signal_handler(signum, frame):
     cleanup()
     sys.exit(0)
 
-async def error_handler(update: Update, context) -> None:
+async def global_error_handler(update: Update, context) -> None:
     """Глобальный обработчик ошибок для приложения"""
     error = context.error
 
@@ -179,7 +166,7 @@ def main() -> None:
         application = Application.builder().token(token).build()
         
         # Регистрация глобального обработчика ошибок
-        application.add_error_handler(error_handler)
+        application.add_error_handler(global_error_handler)
         
         # Команды для всех пользователей
         application.add_handler(CommandHandler("start", start))
