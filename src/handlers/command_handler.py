@@ -114,52 +114,69 @@ async def handle_category(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     logger.info(f"Создана папка '{selected_folder}'")
                 
                 # Получаем список подпапок
-                items = list(yadisk_helper.disk.listdir(selected_folder))
-                logger.info(f"Найдено {len(items)} элементов в директории")
-                
-                folders = [item for item in items if item.type == "dir"]
-                logger.info(f"Из них {len(folders)} папок")
-                
-                if not folders:
-                    # Если подпапок нет, создаем сессию прямо в выбранной папке
-                    return await start_session(update, context, selected_folder, selected_folder)
-                
-                # Сохраняем список подпапок
-                state_manager.set_data(user_id, "folders", folders)
-                
-                # Формируем клавиатуру
-                keyboard = []
-                message = f"📂 Подпапки в '{selected_folder}':\n\n"
-                
-                # Ограничиваем количество папок в одном сообщении
-                MAX_FOLDERS_PER_MESSAGE = 20
-                
-                # Формируем клавиатуру
-                for i, folder in enumerate(folders, 1):
-                    folder_name = folder.name
-                    keyboard.append([f"{i}. {folder_name}"])
+                try:
+                    items = list(yadisk_helper.disk.listdir(selected_folder))
+                    logger.info(f"Найдено {len(items)} элементов в директории {selected_folder}")
                     
-                    # Добавляем папку в сообщение только если не превышаем лимит
-                    if i <= MAX_FOLDERS_PER_MESSAGE:
-                        message += f"{i}. 📁 {folder_name}\n"
-                
-                # Если папок больше, чем MAX_FOLDERS_PER_MESSAGE, добавляем уведомление
-                if len(folders) > MAX_FOLDERS_PER_MESSAGE:
-                    message += f"\n... и еще {len(folders) - MAX_FOLDERS_PER_MESSAGE} папок.\n"
-                    message += "Выберите номер папки из клавиатуры ниже.\n"
-                
-                # Добавляем опцию создания сессии в текущей папке
-                keyboard.append(["📝 Использовать текущую папку"])
-                keyboard.append(["📁 Создать подпапку"])
-                keyboard.append(["❌ Отмена"])
-                
-                await update.message.reply_text(
-                    message,
-                    reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
-                )
-                
-                return NAVIGATE_SUBFOLDERS
-                
+                    # Явно проверяем элементы на тип
+                    folders = []
+                    for item in items:
+                        if hasattr(item, 'type') and item.type == "dir":
+                            folders.append(item)
+                            logger.debug(f"Добавлена папка: {item.name}, Путь: {item.path}")
+                        else:
+                            logger.debug(f"Пропущен элемент: {item.name}, Тип: {getattr(item, 'type', 'неизвестен')}")
+                    
+                    logger.info(f"Из них {len(folders)} папок")
+                    
+                    if not folders:
+                        # Если подпапок нет, создаем сессию прямо в выбранной папке
+                        logger.info(f"Подпапки не найдены в {selected_folder}, создаем сессию в текущей папке")
+                        return await start_session(update, context, selected_folder, selected_folder)
+                    
+                    # Сохраняем список подпапок
+                    state_manager.set_data(user_id, "folders", folders)
+                    
+                    # Формируем клавиатуру
+                    keyboard = []
+                    message = f"📂 Подпапки в '{selected_folder}':\n\n"
+                    
+                    # Ограничиваем количество папок в одном сообщении
+                    MAX_FOLDERS_PER_MESSAGE = 20
+                    
+                    # Формируем клавиатуру
+                    for i, folder in enumerate(folders, 1):
+                        folder_name = folder.name
+                        keyboard.append([f"{i}. {folder_name}"])
+                        
+                        # Добавляем папку в сообщение только если не превышаем лимит
+                        if i <= MAX_FOLDERS_PER_MESSAGE:
+                            message += f"{i}. 📁 {folder_name}\n"
+                    
+                    # Если папок больше, чем MAX_FOLDERS_PER_MESSAGE, добавляем уведомление
+                    if len(folders) > MAX_FOLDERS_PER_MESSAGE:
+                        message += f"\n... и еще {len(folders) - MAX_FOLDERS_PER_MESSAGE} папок.\n"
+                        message += "Выберите номер папки из клавиатуры ниже.\n"
+                    
+                    # Добавляем опцию создания сессии в текущей папке
+                    keyboard.append(["📝 Использовать текущую папку"])
+                    keyboard.append(["📁 Создать подпапку"])
+                    keyboard.append(["❌ Отмена"])
+                    
+                    await update.message.reply_text(
+                        message,
+                        reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
+                    )
+                    
+                    return NAVIGATE_SUBFOLDERS
+                    
+                except Exception as e:
+                    logger.error(f"Ошибка при получении списка папок: {str(e)}", exc_info=True)
+                    await update.message.reply_text(
+                        f"❌ Произошла ошибка при получении списка папок: {str(e)}",
+                        reply_markup=ReplyKeyboardRemove()
+                    )
+                    return ConversationHandler.END
             except Exception as e:
                 logger.error(f"Ошибка при получении списка папок: {str(e)}", exc_info=True)
                 await update.message.reply_text(
@@ -473,9 +490,23 @@ async def switch_meeting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if session:
         # Завершаем текущую сессию и показываем сводку
         await end_session_and_show_summary(update, context)
+        
+        # Очищаем данные состояния после завершения сессии
+        state_manager.clear_data(user_id)
+        state_manager.clear_session(user_id)
     
-    # Начинаем новую встречу
-    return await new_meeting(update, context)
+    # Запускаем процесс создания новой встречи
+    # Используем return с await для правильной работы ConversationHandler
+    await update.message.reply_text(
+        "🔄 Переключаемся на новую встречу. Выберите папку:",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    
+    # Вызываем напрямую new_meeting для запуска нового процесса выбора папки
+    await new_meeting(update, context)
+    
+    # Важно вернуть ConversationHandler.END, чтобы не начинать новую беседу в текущем обработчике
+    return ConversationHandler.END
 
 async def current_meeting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработчик команды /current - показывает информацию о текущей встрече"""
