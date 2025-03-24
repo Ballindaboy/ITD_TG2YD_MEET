@@ -12,9 +12,8 @@ logger = logging.getLogger(__name__)
 
 class YaDiskHelper:
     def __init__(self, skip_connection_check=False):
-        # Увеличиваем таймауты по умолчанию
-        timeout = 60.0
-        self.disk = yadisk.YaDisk(token=YANDEX_DISK_TOKEN, timeout=timeout)
+        # Инициализируем клиент Яндекс.Диска
+        self.disk = yadisk.YaDisk(token=YANDEX_DISK_TOKEN)
         # Флаг для работы в офлайн режиме
         self.offline_mode = False
         
