@@ -744,12 +744,12 @@ async def add_user_last_name(update: Update, context: ContextTypes.DEFAULT_TYPE)
     adding_user_data["last_name"] = last_name
     
     # Обновляем данные пользователя
-    from src.utils.admin_utils import update_user_data
-    success, message = update_user_data(
+    from src.utils.admin_utils import add_allowed_user
+    success, message, _ = add_allowed_user(
         adding_user_id,
-        first_name=adding_user_data.get("first_name"),
-        last_name=last_name,
-        username=adding_user_data.get("username")
+        adding_user_data.get("username"),
+        adding_user_data.get("first_name"),
+        last_name
     )
     
     # Очищаем временные данные
@@ -757,13 +757,16 @@ async def add_user_last_name(update: Update, context: ContextTypes.DEFAULT_TYPE)
     state_manager.remove_data(user_id, "adding_user_data")
     
     # Отображаем результат
-    await update.message.reply_text(
-        f"✅ Пользователь добавлен:\n"
-        f"ID: {adding_user_id}\n"
-        f"Имя: {adding_user_data.get('first_name')}\n"
-        f"Фамилия: {last_name}\n"
-        f"Username: @{adding_user_data.get('username', '(нет)')}"
-    )
+    if success:
+        await update.message.reply_text(
+            f"✅ Пользователь добавлен:\n"
+            f"ID: {adding_user_id}\n"
+            f"Имя: {adding_user_data.get('first_name')}\n"
+            f"Фамилия: {last_name}\n"
+            f"Username: {adding_user_data.get('username', '(нет)')}"
+        )
+    else:
+        await update.message.reply_text(f"❌ Ошибка: {message}")
     
     # Возвращаемся в меню
     await admin(update, context)

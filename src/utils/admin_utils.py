@@ -380,6 +380,10 @@ def update_user_data(user_id: int, first_name: Optional[str] = None,
     """
     users = load_allowed_users()
     
+    # Проверяем, существует ли файл и загрузились ли данные
+    if users is None:
+        users = []
+    
     # Ищем пользователя для обновления
     found = False
     for user in users:
