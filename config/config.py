@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 from datetime import datetime
 import json
 from pathlib import Path
+import logging
 
 # Загрузка переменных окружения из файла .env
 load_dotenv()
@@ -19,6 +20,9 @@ DATA_DIR = Path('data')
 UPLOAD_DIR = DATA_DIR / 'uploads'  # Директория для временного хранения загружаемых файлов
 FOLDERS_FILE = DATA_DIR / 'allowed_folders.json'
 USERS_FILE = DATA_DIR / 'allowed_users.json'
+
+# Настройки логирования
+LOG_LEVEL = getattr(logging, os.getenv('LOG_LEVEL', 'INFO').upper())
 
 # Генерация текущего таймштампа в формате "дата_время"
 def get_current_timestamp():
