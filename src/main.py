@@ -18,7 +18,9 @@ from src.handlers.admin_handler import (
     handle_remove_folder, handle_add_user, handle_remove_user, handle_select_users,
     handle_select_folder, cancel as admin_cancel,
     ADMIN_MENU, ADD_FOLDER, REMOVE_FOLDER, ADD_USER, REMOVE_USER,
-    FOLDER_PATH, USER_ID, FOLDER_PERMISSIONS, SELECT_FOLDER, SELECT_USERS
+    FOLDER_PATH, USER_ID, FOLDER_PERMISSIONS, SELECT_FOLDER, SELECT_USERS,
+    BROWSE_FOLDERS, SELECT_SUBFOLDER, CREATE_SUBFOLDER, browse_folders,
+    select_subfolder, create_subfolder
 )
 from src.handlers.file_handler import handle_message
 
@@ -159,7 +161,10 @@ def main() -> None:
                 SELECT_USERS: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_select_users)],
                 REMOVE_FOLDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_remove_folder)],
                 ADD_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_add_user)],
-                REMOVE_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_remove_user)]
+                REMOVE_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_remove_user)],
+                BROWSE_FOLDERS: [MessageHandler(filters.TEXT & ~filters.COMMAND, browse_folders)],
+                SELECT_SUBFOLDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, select_subfolder)],
+                CREATE_SUBFOLDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, create_subfolder)]
             },
             fallbacks=[CommandHandler("cancel", admin_cancel)]
         )
