@@ -20,22 +20,28 @@ from telegram.error import TelegramError, NetworkError
 # Внутренние модули
 from config.config import validate_config, TELEGRAM_TOKEN, DATA_DIR
 from config.logging_config import configure_logging
-from src.handlers.command_handler import start, help_command, new, cancel
-from src.handlers.file_handler import file_received
+from src.handlers.command_handler import (
+    start, help_command, new_meeting, handle_category, navigate_folders,
+    switch_meeting, current_meeting, cancel, create_folder,
+    handle_session_callback, end_session_and_show_summary,
+    CHOOSE_FOLDER, NAVIGATE_SUBFOLDERS, CREATE_FOLDER
+)
+from src.handlers.file_handler import handle_message, handle_text, handle_file
 from src.handlers.media_handlers.photo_handler import photo_received
 from src.handlers.media_handlers.audio_handler import audio_received
 from src.handlers.media_handlers.video_handler import video_received
 from src.handlers.media_handlers.document_handler import document_received
-from src.handlers.admin_handler import admin, add_folder, add_users, remove_folder, remove_users, cancel as admin_cancel
-from src.handlers.admin.states import *
-from src.handlers.admin.menu_handler import admin_menu, handle_category_choice
-from src.handlers.admin.folder_handlers import browse_folders, select_subfolder, create_subfolder
-from src.handlers.admin.user_handlers import add_users_to_folder, remove_users_from_folder
-from src.utils.folder_navigation import BROWSE_FOLDERS, SELECT_SUBFOLDER, CREATE_SUBFOLDER
+from src.handlers.admin_handler import (
+    admin, admin_menu_handler, handle_folder_path, handle_folder_permissions,
+    handle_remove_folder, add_user, add_user_first_name, add_user_last_name, 
+    handle_remove_user, handle_select_users, handle_select_folder, cancel as admin_cancel,
+    ADMIN_MENU, ADD_FOLDER, REMOVE_FOLDER, ADD_USER, REMOVE_USER,
+    FOLDER_PATH, USER_ID, FOLDER_PERMISSIONS, SELECT_FOLDER, SELECT_USERS,
+    BROWSE_FOLDERS, SELECT_SUBFOLDER, CREATE_SUBFOLDER, browse_folders,
+    select_subfolder, create_subfolder, ADMIN_USER_FIRST_NAME, ADMIN_USER_LAST_NAME
+)
 from src.utils.error_utils import handle_error
-
-# Константы для состояний разговора
-TITLE, DESCRIPTION, CATEGORY, DATE, TIME, LOCATION, RECEIVE_FILE, CONFIRMATION = range(8)
+from src.utils.session_utils import SESSION_TIMEOUT
 
 # Настройка логирования
 logger = logging.getLogger(__name__)
@@ -113,93 +119,61 @@ def main() -> None:
         # Команды для всех пользователей
         application.add_handler(CommandHandler("start", start))
         application.add_handler(CommandHandler("help", help_command))
+        application.add_handler(CommandHandler("switch", switch_meeting))
+        application.add_handler(CommandHandler("current", current_meeting))
         
-        # Обработчик команды для создания нового собрания
-        conv_handler = ConversationHandler(
-            entry_points=[CommandHandler("new", new)],
+        # Обработчик колбэков от кнопок сессии
+        application.add_handler(CallbackQueryHandler(handle_session_callback, pattern=r"^(end_session|extend_session|add_final_comment)$"))
+        
+        # Обработчик создания новой встречи
+        new_meeting_handler = ConversationHandler(
+            entry_points=[CommandHandler("new", new_meeting)],
             states={
-                TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, lambda update, context: new(update, context, TITLE))],
-                DESCRIPTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, lambda update, context: new(update, context, DESCRIPTION))],
-                CATEGORY: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, lambda update, context: new(update, context, CATEGORY)),
-                    CallbackQueryHandler(lambda update, context: new(update, context, CATEGORY), pattern=r"^category_")
-                ],
-                DATE: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, lambda update, context: new(update, context, DATE)),
-                    CallbackQueryHandler(lambda update, context: new(update, context, DATE), pattern=r"^date_")
-                ],
-                TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, lambda update, context: new(update, context, TIME))],
-                LOCATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, lambda update, context: new(update, context, LOCATION))],
-                RECEIVE_FILE: [
-                    MessageHandler(filters.PHOTO, photo_received),
-                    MessageHandler(filters.AUDIO, audio_received),
-                    MessageHandler(filters.VIDEO, video_received),
-                    MessageHandler(filters.Document.ALL, document_received),
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, file_received),
-                    CallbackQueryHandler(lambda update, context: new(update, context, CONFIRMATION), pattern=r"^confirm$")
-                ],
-                CONFIRMATION: [
-                    CallbackQueryHandler(lambda update, context: new(update, context, CONFIRMATION), pattern=r"^confirm$"),
-                    CallbackQueryHandler(lambda update, context: new(update, context, RECEIVE_FILE), pattern=r"^back$")
-                ],
+                CHOOSE_FOLDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_category)],
+                NAVIGATE_SUBFOLDERS: [MessageHandler(filters.TEXT & ~filters.COMMAND, navigate_folders)],
+                CREATE_FOLDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, create_folder)]
             },
-            fallbacks=[CommandHandler("cancel", cancel)],
+            fallbacks=[CommandHandler("cancel", cancel)]
         )
-        application.add_handler(conv_handler)
+        application.add_handler(new_meeting_handler)
         
-        # Административные команды
-        admin_conv_handler = ConversationHandler(
+        # Обработчик административных команд
+        admin_handler = ConversationHandler(
             entry_points=[CommandHandler("admin", admin)],
             states={
-                ADMIN_MENU: [
-                    CallbackQueryHandler(handle_category_choice, pattern=r"^category_")
-                ],
-                ADMIN_ADD_FOLDER: [
-                    CallbackQueryHandler(browse_folders, pattern=r"^browse_folders$"),
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, add_folder),
-                    CallbackQueryHandler(admin_menu, pattern=r"^back_to_menu$")
-                ],
-                ADMIN_ADD_USERS: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, add_users),
-                    CallbackQueryHandler(admin_menu, pattern=r"^back_to_menu$")
-                ],
-                ADMIN_REMOVE_FOLDER: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, remove_folder),
-                    CallbackQueryHandler(admin_menu, pattern=r"^back_to_menu$")
-                ],
-                ADMIN_REMOVE_USERS: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, remove_users),
-                    CallbackQueryHandler(admin_menu, pattern=r"^back_to_menu$")
-                ],
-                BROWSE_FOLDERS: [
-                    CallbackQueryHandler(select_subfolder, pattern=r"^select_subfolder:"),
-                    CallbackQueryHandler(create_subfolder, pattern=r"^create_subfolder$"),
-                    CallbackQueryHandler(add_users_to_folder, pattern=r"^add_folder$"),
-                    CallbackQueryHandler(browse_folders, pattern=r"^up$"),
-                    CallbackQueryHandler(admin_menu, pattern=r"^back_to_menu$")
-                ],
-                SELECT_SUBFOLDER: [
-                    CallbackQueryHandler(browse_folders, pattern=r"^back_to_folders$")
-                ],
-                CREATE_SUBFOLDER: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, create_subfolder),
-                    CallbackQueryHandler(browse_folders, pattern=r"^back_to_folders$")
-                ],
-                ADMIN_ADD_USERS_TO_FOLDER: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, add_users_to_folder),
-                    CallbackQueryHandler(browse_folders, pattern=r"^back_to_folders$")
-                ],
-                ADMIN_REMOVE_USERS_FROM_FOLDER: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, remove_users_from_folder),
-                    CallbackQueryHandler(browse_folders, pattern=r"^back_to_folders$")
-                ]
+                ADMIN_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_menu_handler)],
+                FOLDER_PATH: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_folder_path)],
+                FOLDER_PERMISSIONS: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_folder_permissions)],
+                SELECT_FOLDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_select_folder)],
+                SELECT_USERS: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_select_users)],
+                REMOVE_FOLDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_remove_folder)],
+                ADD_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_user)],
+                ADMIN_USER_FIRST_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_user_first_name)],
+                ADMIN_USER_LAST_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_user_last_name)],
+                REMOVE_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_remove_user)],
+                BROWSE_FOLDERS: [MessageHandler(filters.TEXT & ~filters.COMMAND, browse_folders)],
+                SELECT_SUBFOLDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, select_subfolder)],
+                CREATE_SUBFOLDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, create_subfolder)]
             },
             fallbacks=[CommandHandler("cancel", admin_cancel)]
         )
-        application.add_handler(admin_conv_handler)
+        application.add_handler(admin_handler)
+        
+        # Обработчики текстовых сообщений и файлов
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+        application.add_handler(MessageHandler(filters.PHOTO, lambda update, context: handle_file(update, context, photo_received)))
+        application.add_handler(MessageHandler(filters.AUDIO, lambda update, context: handle_file(update, context, audio_received)))
+        application.add_handler(MessageHandler(filters.VIDEO, lambda update, context: handle_file(update, context, video_received)))
+        application.add_handler(MessageHandler(filters.Document.ALL, lambda update, context: handle_file(update, context, document_received)))
+        
+        # Настройка параметров сессий
+        # Устанавливаем время жизни сессии в секундах (по умолчанию 30 минут)
+        session_timeout_seconds = int(SESSION_TIMEOUT.total_seconds())
+        application.bot_data["session_timeout"] = session_timeout_seconds
+        logger.info(f"Время жизни сессии установлено: {session_timeout_seconds} секунд")
         
         # Запуск бота
-        logger.info("Бот запущен")
+        logger.info("Бот запущен и готов к работе")
         application.run_polling(drop_pending_updates=True)
     
     except Exception as e:
