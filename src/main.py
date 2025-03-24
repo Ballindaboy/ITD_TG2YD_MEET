@@ -175,9 +175,11 @@ def main() -> None:
         
         # Создаем обработчик для создания новой встречи
         application.add_handler(CommandHandler("meet", new_meeting))
+        application.add_handler(CommandHandler("new", new_meeting))  # Альтернативная команда
         
         # Добавляем обработчик для просмотра и переключения между встречами
         application.add_handler(CommandHandler("meetings", switch_meeting))
+        application.add_handler(CommandHandler("switch", switch_meeting))  # Альтернативная команда
         application.add_handler(CommandHandler("current", current_meeting))
         
         # Обработчик для завершения встречи
