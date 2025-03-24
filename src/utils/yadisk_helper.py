@@ -92,6 +92,13 @@ class YaDiskHelper:
         max_retries = 3
         retry_delay = 2  # секунды
         
+        # Проверяем существование файла перед загрузкой для предотвращения перезаписи
+        if not overwrite and self.disk.exists(remote_path):
+            # Меняем путь, добавляя дополнительную уникальность через временную метку
+            base_path, ext = os.path.splitext(remote_path)
+            remote_path = f"{base_path}_{int(time.time()*1000000)}{ext}"
+            logger.warning(f"Обнаружен существующий файл, генерируем новое имя: {remote_path}")
+        
         while retry_count < max_retries:
             try:
                 logger.debug(f"Загрузка файла: {remote_path}")
@@ -180,30 +187,58 @@ class YaDiskHelper:
         
         while retry_count < max_retries:
             try:
-                try:
-                    tmp_path = self._create_temp_file()
-                    
-                    # Пытаемся скачать существующий файл
-                    self.disk.download(path, tmp_path)
-                    
-                    # Добавляем новый контент
-                    with open(tmp_path, 'a', encoding='utf-8') as f:
-                        f.write("\n" + content)
-                except:
-                    # Если файл не существует, создаем новый
-                    if tmp_path:
-                        os.unlink(tmp_path)
-                    tmp_path = self._create_temp_file(content)
+                existing_content = ""
                 
-                # Загружаем обратно на Яндекс.Диск с перезаписью
-                self.disk.upload(tmp_path, path, overwrite=True, timeout=60.0)
+                # Проверяем существование файла
+                if self.disk.exists(path):
+                    try:
+                        # Скачиваем существующий файл
+                        tmp_path = self._create_temp_file()
+                        self.disk.download(path, tmp_path)
+                        
+                        # Читаем содержимое
+                        with open(tmp_path, 'r', encoding='utf-8') as f:
+                            existing_content = f.read()
+                        
+                        # Удаляем временный файл после чтения
+                        os.unlink(tmp_path)
+                        tmp_path = None
+                    except Exception as e:
+                        logger.warning(f"Не удалось прочитать существующий файл: {str(e)}")
+                        if tmp_path and os.path.exists(tmp_path):
+                            os.unlink(tmp_path)
+                            tmp_path = None
+                
+                # Создаем новый временный файл с объединенным содержимым
+                new_content = existing_content
+                if new_content and not new_content.endswith("\n"):
+                    new_content += "\n"
+                new_content += content
+                
+                tmp_path = self._create_temp_file(new_content)
+                
+                # В случае ошибки при записи, создаем новый файл с другим именем
+                if self.disk.exists(path) and retry_count > 0:
+                    # Генерируем новое имя файла с временной меткой
+                    dir_path = os.path.dirname(path)
+                    base_name = os.path.basename(path)
+                    name, ext = os.path.splitext(base_name)
+                    timestamp = int(time.time() * 1000000)
+                    new_path = f"{dir_path}/{name}_{timestamp}{ext}"
+                    logger.warning(f"Создание нового файла вместо обновления: {new_path}")
+                    path = new_path
+                
+                # Загружаем на Яндекс.Диск без перезаписи при первой попытке, с перезаписью при повторе
+                overwrite_flag = retry_count > 0
+                logger.info(f"Запись в файл {path} (перезапись: {overwrite_flag})")
+                self.disk.upload(tmp_path, path, overwrite=overwrite_flag, timeout=60.0)
                 
                 return True
             except Exception as e:
                 retry_count += 1
                 error_msg = str(e).lower()
                 
-                if retry_count < max_retries and ("timeout" in error_msg or "connection" in error_msg):
+                if retry_count < max_retries and ("timeout" in error_msg or "connection" in error_msg or "resource already exists" in error_msg):
                     logger.warning(f"Попытка {retry_count}/{max_retries}: Ошибка при добавлении текста в файл: {str(e)}. Повторная попытка через {retry_delay} сек.")
                     time.sleep(retry_delay)
                     retry_delay *= 2  # Увеличиваем время ожидания для следующей попытки

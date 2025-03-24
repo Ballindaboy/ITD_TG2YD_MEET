@@ -28,7 +28,10 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE, file_
         await download_telegram_file(context, file_id, tmp_path)
         
         # Добавляем уникальный идентификатор к пути файла на Яндекс.Диске
-        unique_id = int(time.time() * 1000) % 10000  # Миллисекунды модуль 10000 для уникальности
+        # Используем микросекунды и случайное число для полной уникальности
+        current_time = time.time()
+        microseconds = int((current_time - int(current_time)) * 1000000)
+        unique_id = f"{int(current_time)}_{microseconds}_{os.getpid()}"
         modified_prefix = f"{session.file_prefix}_{unique_id}"
         yandex_path = f"{session.folder_path}/{modified_prefix}.ogg"
         
@@ -40,14 +43,8 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE, file_
         logger.debug(f"Начинаем загрузку голосового сообщения: {yandex_path}")
         await status_message.edit_text(f"🔉 Загрузка голосового сообщения ({file_size_mb} МБ)...")
         
-        try:
-            yadisk_helper.upload_file(tmp_path, yandex_path)
-        except Exception as e:
-            if "уже существует" in str(e) or "already exists" in str(e):
-                logger.warning(f"Файл {yandex_path} уже существует. Пробуем загрузить с перезаписью.")
-                yadisk_helper.upload_file(tmp_path, yandex_path, overwrite=True)
-            else:
-                raise
+        # Удаляем код для перезаписи - каждый файл должен быть уникальным
+        yadisk_helper.upload_file(tmp_path, yandex_path, overwrite=False)
         
         # Автоматическая расшифровка голосового сообщения
         await status_message.edit_text("🎙 Распознаю речь...")
