@@ -216,7 +216,7 @@ def add_allowed_user(user_id, username=None, first_name=None, last_name=None):
     # Проверяем, есть ли уже такой пользователь
     for user in users:
         if user['id'] == user_id:
-            return False, "Этот пользователь уже в списке разрешенных"
+            return False, "Этот пользователь уже в списке разрешенных", user
     
     # Добавляем нового пользователя
     user_data = {
@@ -227,13 +227,17 @@ def add_allowed_user(user_id, username=None, first_name=None, last_name=None):
         'added_at': get_timestamp()
     }
     
+    # Если не предоставлено имя и фамилия, запрашиваем их
+    if not first_name and not last_name and not username:
+        return False, "Для добавления пользователя заполните данные", user_data
+    
     users.append(user_data)
     
     if save_allowed_users(users):
         name = username or first_name or f"ID: {user_id}"
-        return True, f"Пользователь {name} добавлен в список разрешенных"
+        return True, f"Пользователь {name} добавлен в список разрешенных", user_data
     else:
-        return False, "Ошибка при сохранении пользователей"
+        return False, "Ошибка при сохранении пользователей", user_data
 
 def remove_allowed_user(user_id):
     """Удаляет пользователя из списка разрешенных"""
@@ -342,4 +346,47 @@ def get_user_data(user_id: int) -> Dict[str, Any]:
         user_data['id'] = user_id  # Добавляем ID в данные
         return user_data
     
-    return {'id': user_id, 'username': None, 'first_name': None, 'last_name': None, 'is_admin': False} 
+    return {'id': user_id, 'username': None, 'first_name': None, 'last_name': None, 'is_admin': False}
+
+def update_user_data(user_id: int, first_name: Optional[str] = None, 
+                    last_name: Optional[str] = None, username: Optional[str] = None) -> Tuple[bool, str]:
+    """
+    Обновляет данные существующего пользователя.
+    
+    Args:
+        user_id: ID пользователя
+        first_name: Имя пользователя
+        last_name: Фамилия пользователя
+        username: Имя пользователя в Telegram
+        
+    Returns:
+        Кортеж (успех, сообщение)
+    """
+    users = load_allowed_users()
+    
+    # Ищем пользователя для обновления
+    found = False
+    for user in users:
+        if user['id'] == user_id:
+            # Обновляем данные пользователя
+            if first_name is not None:
+                user['first_name'] = first_name
+            if last_name is not None:
+                user['last_name'] = last_name
+            if username is not None:
+                user['username'] = username
+                
+            found = True
+            break
+    
+    if not found:
+        # Если пользователь не найден, добавляем его
+        return add_allowed_user(user_id, username, first_name, last_name)
+    
+    if save_allowed_users(users):
+        display_name = get_user_display_name(
+            {'id': user_id, 'username': username, 'first_name': first_name, 'last_name': last_name}
+        )
+        return True, f"Данные пользователя {display_name} обновлены"
+    else:
+        return False, "Ошибка при сохранении пользователей" 
