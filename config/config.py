@@ -14,15 +14,9 @@ YANDEX_DISK_TOKEN = os.getenv('YANDEX_DISK_TOKEN')
 # ID администраторов
 ADMIN_IDS = [int(id.strip()) for id in os.getenv('ADMIN_IDS', '').split(',') if id.strip()]
 
-# Настройки логирования
-LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
-LOG_FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-
-# Настройки загрузки
-UPLOAD_DIR = os.getenv('UPLOAD_DIR', 'Telegram_Bot_Uploads')
-
-# Файлы с информацией о разрешенных папках и пользователях
+# Директории и файлы
 DATA_DIR = Path('data')
+UPLOAD_DIR = DATA_DIR / 'uploads'  # Директория для временного хранения загружаемых файлов
 FOLDERS_FILE = DATA_DIR / 'allowed_folders.json'
 USERS_FILE = DATA_DIR / 'allowed_users.json'
 
@@ -45,9 +39,9 @@ def validate_config():
     if missing_vars:
         raise ValueError(f"Отсутствуют обязательные переменные окружения: {', '.join(missing_vars)}")
     
-    # Создаем директорию для данных, если она еще не существует
-    if not DATA_DIR.exists():
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
+    # Создаем директории, если они еще не существуют
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     
     # Создаем файлы с разрешенными папками и пользователями, если они еще не существуют
     if not FOLDERS_FILE.exists():
