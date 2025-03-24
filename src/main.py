@@ -27,7 +27,7 @@ from src.handlers.command_handler import (
     CHOOSE_FOLDER, NAVIGATE_SUBFOLDERS, CREATE_FOLDER
 )
 from src.handlers.file_handler import handle_message, handle_text, handle_file
-from src.handlers.media_handlers.photo_handler import photo_received
+from src.handlers.media_handlers.photo_handler import handle_photo
 from src.handlers.media_handlers.audio_handler import audio_received
 from src.handlers.media_handlers.video_handler import video_received
 from src.handlers.media_handlers.document_handler import document_received
@@ -161,7 +161,7 @@ def main() -> None:
         
         # Обработчики текстовых сообщений и файлов
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-        application.add_handler(MessageHandler(filters.PHOTO, lambda update, context: handle_file(update, context, photo_received)))
+        application.add_handler(MessageHandler(filters.PHOTO, lambda update, context: handle_file(update, context, handle_photo)))
         application.add_handler(MessageHandler(filters.AUDIO, lambda update, context: handle_file(update, context, audio_received)))
         application.add_handler(MessageHandler(filters.VIDEO, lambda update, context: handle_file(update, context, video_received)))
         application.add_handler(MessageHandler(filters.Document.ALL, lambda update, context: handle_file(update, context, document_received)))
