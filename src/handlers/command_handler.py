@@ -202,6 +202,8 @@ async def navigate_folders(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     text = update.message.text
     selected_folder = state_manager.get_data(user_id, "selected_folder")
     
+    logger.debug(f"Пользователь {user_id} выбрал '{text}' в папке '{selected_folder}'")
+    
     if text == "❌ Отмена":
         await update.message.reply_text(
             "❌ Создание встречи отменено",
@@ -231,8 +233,80 @@ async def navigate_folders(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 folder_path = normalize_path(selected_subfolder.path)
                 folder_name = selected_subfolder.name
                 
-                # Создаем сессию в выбранной подпапке
-                return await start_session(update, context, selected_folder, folder_path)
+                logger.info(f"Пользователь выбрал подпапку: {folder_path}")
+                
+                # Проверяем, есть ли подпапки в выбранной папке
+                try:
+                    items = list(yadisk_helper.disk.listdir(folder_path))
+                    logger.debug(f"Найдено {len(items)} элементов в {folder_path}")
+                    
+                    # Ищем папки среди элементов
+                    subfolders = []
+                    for item in items:
+                        if hasattr(item, 'type') and item.type == "dir":
+                            subfolders.append(item)
+                    
+                    logger.debug(f"Найдено {len(subfolders)} подпапок в {folder_path}")
+                    
+                    if subfolders:
+                        # Если есть подпапки, предлагаем выбрать из них
+                        state_manager.set_data(user_id, "selected_folder", folder_path)
+                        state_manager.set_data(user_id, "folders", subfolders)
+                        
+                        # Формируем клавиатуру
+                        keyboard = []
+                        message = f"📂 Подпапки в '{folder_path}':\n\n"
+                        
+                        # Ограничиваем количество папок в одном сообщении
+                        MAX_FOLDERS_PER_MESSAGE = 20
+                        
+                        # Формируем клавиатуру
+                        for i, subfolder in enumerate(subfolders, 1):
+                            keyboard.append([f"{i}. {subfolder.name}"])
+                            
+                            # Добавляем папку в сообщение только если не превышаем лимит
+                            if i <= MAX_FOLDERS_PER_MESSAGE:
+                                message += f"{i}. 📁 {subfolder.name}\n"
+                        
+                        # Если папок больше, чем MAX_FOLDERS_PER_MESSAGE, добавляем уведомление
+                        if len(subfolders) > MAX_FOLDERS_PER_MESSAGE:
+                            message += f"\n... и еще {len(subfolders) - MAX_FOLDERS_PER_MESSAGE} папок.\n"
+                            message += "Выберите номер папки из клавиатуры ниже.\n"
+                        
+                        # Добавляем опции
+                        keyboard.append(["📝 Использовать текущую папку"])
+                        keyboard.append(["📁 Создать подпапку"])
+                        keyboard.append(["❌ Отмена"])
+                        
+                        await update.message.reply_text(
+                            message,
+                            reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
+                        )
+                        
+                        return NAVIGATE_SUBFOLDERS
+                    else:
+                        # Если подпапок нет, предлагаем создать новую или использовать текущую
+                        keyboard = [
+                            ["📝 Использовать текущую папку"],
+                            ["📁 Создать подпапку"], 
+                            ["❌ Отмена"]
+                        ]
+                        
+                        await update.message.reply_text(
+                            f"📂 В папке '{folder_path}' нет подпапок.\n\n"
+                            "Вы можете создать новую подпапку или использовать текущую папку.",
+                            reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
+                        )
+                        
+                        # Сохраняем выбранную папку
+                        state_manager.set_data(user_id, "selected_folder", folder_path)
+                        
+                        return NAVIGATE_SUBFOLDERS
+                        
+                except Exception as e:
+                    logger.error(f"Ошибка при получении подпапок: {str(e)}", exc_info=True)
+                    # Если возникла ошибка, предлагаем создать сессию в выбранной папке
+                    return await start_session(update, context, selected_folder, folder_path)
             else:
                 await update.message.reply_text(
                     "❌ Неверный номер папки",
