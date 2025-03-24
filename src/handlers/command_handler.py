@@ -316,13 +316,17 @@ async def start_session(update: Update, context: ContextTypes.DEFAULT_TYPE, root
         )
         
         # Планируем запрос о закрытии сессии через 10 минут
-        # Используем job_queue для планирования задачи
-        context.job_queue.run_once(
-            lambda context: check_session_activity(context, user_id),
-            600,  # 10 минут в секундах
-            data=user_id,
-            name=f"session_timeout_{user_id}"
-        )
+        # Используем job_queue для планирования задачи, если он доступен
+        if hasattr(context, 'job_queue') and context.job_queue is not None:
+            context.job_queue.run_once(
+                lambda context: check_session_activity(context, user_id),
+                600,  # 10 минут в секундах
+                data=user_id,
+                name=f"session_timeout_{user_id}"
+            )
+            logger.info(f"Запланирована проверка активности сессии для пользователя {user_id}")
+        else:
+            logger.warning(f"job_queue недоступен для планирования проверки активности сессии пользователя {user_id}")
         
         return ConversationHandler.END
         
@@ -380,12 +384,19 @@ async def handle_session_callback(update: Update, context: ContextTypes.DEFAULT_
         )
         
         # Планируем новый запрос через 10 минут
-        context.job_queue.run_once(
-            lambda context: check_session_activity(context, user_id),
-            600,  # 10 минут в секундах
-            data=user_id,
-            name=f"session_timeout_{user_id}"
-        )
+        if hasattr(context, 'job_queue') and context.job_queue is not None:
+            context.job_queue.run_once(
+                lambda context: check_session_activity(context, user_id),
+                600,  # 10 минут в секундах
+                data=user_id,
+                name=f"session_timeout_{user_id}"
+            )
+            logger.info(f"Запланирована проверка активности сессии для пользователя {user_id}")
+        else:
+            logger.warning(f"job_queue недоступен для планирования проверки активности сессии пользователя {user_id}")
+            await query.edit_message_text(
+                text="✅ Встреча продлена еще на 10 минут.\n⚠️ Автоматическое напоминание об окончании недоступно."
+            )
 
 async def end_session_and_show_summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
@@ -444,9 +455,13 @@ async def end_session_and_show_summary(update: Update, context: ContextTypes.DEF
     state_manager.clear_session(user_id)
     
     # Отменяем запланированные задачи для этого пользователя
-    current_jobs = context.job_queue.get_jobs_by_name(f"session_timeout_{user_id}")
-    for job in current_jobs:
-        job.schedule_removal()
+    if hasattr(context, 'job_queue') and context.job_queue is not None:
+        current_jobs = context.job_queue.get_jobs_by_name(f"session_timeout_{user_id}")
+        for job in current_jobs:
+            job.schedule_removal()
+        logger.info(f"Отменены запланированные проверки активности для пользователя {user_id}")
+    else:
+        logger.warning(f"job_queue недоступен для отмены проверок активности для пользователя {user_id}")
 
 async def switch_meeting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработчик команды /switch - переключение на другую встречу"""
