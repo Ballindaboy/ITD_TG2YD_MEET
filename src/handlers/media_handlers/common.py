@@ -32,6 +32,7 @@ async def download_telegram_file(context, file_id, tmp_path):
     """Скачивает файл из Telegram во временную директорию"""
     file = await context.bot.get_file(file_id)
     await file.download_to_drive(tmp_path)
+    logger.debug(f"Файл успешно скачан из Telegram в {tmp_path}")
     return file
 
 async def process_caption(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -42,6 +43,9 @@ async def process_caption(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     
     if not session:
         return
+    
+    # Отправляем статусное сообщение    
+    status_message = await update.message.reply_text("🔄 Добавляю подпись к файлу в отчет...")
         
     try:
         # Добавляем подпись в файл встречи
@@ -49,10 +53,20 @@ async def process_caption(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             session.txt_file_path, 
             f"Подпись к файлу: {caption}"
         )
-        await update.message.reply_text("📌 Подпись добавлена в файл встречи.")
+        await status_message.edit_text("✅ Подпись успешно добавлена в отчёт.")
     except Exception as e:
-        logger.error(f"Ошибка при добавлении подписи: {str(e)}", exc_info=True)
-        await update.message.reply_text(f"❌ Произошла ошибка: {str(e)}")
+        error_msg = str(e)
+        logger.error(f"Ошибка при добавлении подписи: {error_msg}", exc_info=True)
+        
+        user_message = "❌ Не удалось добавить подпись к файлу."
+        if "timeout" in error_msg.lower():
+            user_message += "\n⏱ Превышено время ожидания при загрузке."
+        elif "connection" in error_msg.lower():
+            user_message += "\n🌐 Проблема с подключением к Яндекс.Диску."
+        else:
+            user_message += f"\n⚠️ Детали: {error_msg[:100]}" if len(error_msg) > 100 else f"\n⚠️ Детали: {error_msg}"
+            
+        await status_message.edit_text(user_message)
     
     # Сбрасываем состояние ожидания
     state_manager.set_data(user_id, "awaiting_caption", False) 

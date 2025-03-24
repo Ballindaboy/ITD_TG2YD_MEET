@@ -15,14 +15,15 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE, file_
     user_id = update.effective_user.id
     
     # Сообщаем о начале обработки
-    status_message = await update.message.reply_text("🖼 Обрабатываю фото...")
+    status_message = await update.message.reply_text("🔄 Начинаю обработку фотографии...")
     
     try:
         # Создаем временный файл
         with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
             tmp_path = tmp_file.name
         
-        # Скачиваем файл
+        # Обновляем статус и скачиваем файл
+        await status_message.edit_text("📥 Скачиваю фотографию...")
         await download_telegram_file(context, file_id, tmp_path)
         
         # Путь для сохранения на Яндекс.Диске
@@ -34,25 +35,52 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE, file_
         
         # Загружаем на Яндекс.Диск
         logger.debug(f"Начинаем загрузку фото: {yandex_path}")
-        await status_message.edit_text(f"🖼 Загрузка фото ({file_size_mb} МБ)...")
+        await status_message.edit_text(f"☁️ Загружаю фотографию ({file_size_mb} МБ) на Яндекс.Диск...\nЭто может занять несколько секунд.")
         
-        yadisk_helper.upload_file(tmp_path, yandex_path)
+        try:
+            yadisk_helper.upload_file(tmp_path, yandex_path)
+        except Exception as e:
+            if "уже существует" in str(e) or "already exists" in str(e):
+                logger.warning(f"Файл {yandex_path} уже существует. Пробуем загрузить с перезаписью.")
+                await status_message.edit_text(f"⚠️ Файл с таким именем уже существует. Перезаписываю...")
+                yadisk_helper.upload_file(tmp_path, yandex_path, overwrite=True)
+            else:
+                raise
         
         # Удаляем временный файл
         os.unlink(tmp_path)
         
         # Спрашиваем о подписи
         await status_message.edit_text(
-            f"🖼 Фото сохранено как\n{session.file_prefix}.jpg\n\n"
-            "Хотите добавить подпись к фото?"
+            f"✅ Фотография успешно сохранена как\n{session.file_prefix}.jpg\n\n"
+            "Хотите добавить подпись к фотографии? Если да, отправьте текст подписи, иначе отправьте любое другое сообщение."
         )
         
         # Устанавливаем состояние ожидания подписи
         state_manager.set_data(user_id, "awaiting_caption", True)
         
     except Exception as e:
-        logger.error(f"Ошибка при обработке фото: {str(e)}", exc_info=True)
-        await status_message.edit_text(f"❌ Произошла ошибка при обработке фото: {str(e)}")
+        error_msg = str(e)
+        logger.error(f"Ошибка при обработке фотографии: {error_msg}", exc_info=True)
+        
+        # Определяем тип ошибки для более дружественного сообщения
+        user_message = f"❌ Произошла ошибка при обработке фотографии."
+        
+        if "timeout" in error_msg.lower():
+            user_message += "\n⏱ Превышено время ожидания при загрузке. Возможно, проблемы с сетью или сервером Яндекс.Диска."
+        elif "connection" in error_msg.lower():
+            user_message += "\n🌐 Проблема с подключением к Яндекс.Диску. Проверьте интернет-соединение."
+        elif "существует" in error_msg.lower() or "exists" in error_msg.lower():
+            user_message += "\n🔄 Файл с таким именем уже существует, и перезапись не удалась."
+        elif "permission" in error_msg.lower() or "доступ" in error_msg.lower():
+            user_message += "\n🔒 Нет прав доступа к указанной папке на Яндекс.Диске."
+        else:
+            user_message += f"\n⚠️ Детали: {error_msg[:100]}..." if len(error_msg) > 100 else f"\n⚠️ Детали: {error_msg}"
+        
+        user_message += "\n\nПопробуйте повторить операцию позже или обратитесь к администратору."
+        
+        await status_message.edit_text(user_message)
+        
         if 'tmp_path' in locals():
             try:
                 os.unlink(tmp_path)
