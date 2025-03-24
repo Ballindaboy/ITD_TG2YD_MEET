@@ -13,10 +13,7 @@ TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 YANDEX_DISK_TOKEN = os.getenv('YANDEX_DISK_TOKEN')
 
 # ID администраторов
-admin_ids_str = os.getenv('ADMIN_IDS', '')
-# Очищаем строку от нежелательных символов
-admin_ids_str = admin_ids_str.rstrip('%,;:. \t\n\r')
-ADMIN_IDS = [int(id.strip()) for id in admin_ids_str.split(',') if id.strip()]
+ADMIN_IDS = [int(id.strip()) for id in os.getenv('ADMIN_IDS', '').split(',') if id.strip()]
 
 # Директории и файлы
 DATA_DIR = Path('data')
