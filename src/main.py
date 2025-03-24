@@ -13,6 +13,12 @@ from src.handlers.command_handler import (
     switch_meeting, current_meeting, cancel, create_folder,
     CHOOSE_CATEGORY, NAVIGATE_FOLDERS, CREATE_FOLDER
 )
+from src.handlers.admin_handler import (
+    admin, admin_menu_handler, handle_category_choice, handle_folder_path,
+    handle_remove_folder, handle_add_user, handle_remove_user, cancel as admin_cancel,
+    ADMIN_MENU, ADD_FOLDER, REMOVE_FOLDER, ADD_USER, REMOVE_USER, CHOOSE_CATEGORY as ADMIN_CHOOSE_CATEGORY,
+    FOLDER_PATH, USER_ID
+)
 from src.handlers.file_handler import handle_message
 
 # Путь к файлу блокировки
@@ -140,6 +146,21 @@ def main() -> None:
             fallbacks=[CommandHandler("cancel", cancel)]
         )
         application.add_handler(new_meeting_handler)
+        
+        # Обработчик административных команд
+        admin_handler = ConversationHandler(
+            entry_points=[CommandHandler("admin", admin)],
+            states={
+                ADMIN_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_menu_handler)],
+                ADMIN_CHOOSE_CATEGORY: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_category_choice)],
+                FOLDER_PATH: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_folder_path)],
+                REMOVE_FOLDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_remove_folder)],
+                ADD_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_add_user)],
+                REMOVE_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_remove_user)]
+            },
+            fallbacks=[CommandHandler("cancel", admin_cancel)]
+        )
+        application.add_handler(admin_handler)
         
         # Обработчик всех остальных сообщений (текст и файлы)
         application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
