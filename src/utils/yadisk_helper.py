@@ -252,17 +252,34 @@ class YaDiskHelper:
             parent_path = os.path.dirname(path)
             if not self.disk.exists(parent_path):
                 self.ensure_folder_exists(parent_path)
-                
+            
+            # Проверяем существует ли уже такой файл
+            if self.disk.exists(path):
+                logger.warning(f"Файл {path} уже существует. Используем append_to_text_file вместо create_text_file.")
+                return self.append_to_text_file(path, content)
+            
+            # Создаем временный файл
             tmp_path = self._create_temp_file(content)
             
-            # Загружаем на Яндекс.Диск
-            self.upload_file(tmp_path, path)
+            # Загружаем временный файл на Яндекс.Диск
+            self.disk.upload(tmp_path, path)
             
             # Удаляем временный файл
             os.unlink(tmp_path)
+            
+            logger.debug(f"Создан текстовый файл: {path}")
             return True
+            
         except Exception as e:
             logger.error(f"Ошибка при создании текстового файла: {str(e)}", exc_info=True)
+            # Если файл уже существует, не бросаем исключение, а используем append
+            if "already exists" in str(e).lower() or "уже существует" in str(e).lower():
+                logger.warning(f"Файл {path} уже существует. Пробуем добавить содержимое к существующему файлу.")
+                try:
+                    return self.append_to_text_file(path, content)
+                except Exception as append_error:
+                    logger.error(f"Не удалось добавить содержимое к существующему файлу: {str(append_error)}", exc_info=True)
+                    raise
             raise
     
     def append_to_text_file(self, path: str, content: str):
