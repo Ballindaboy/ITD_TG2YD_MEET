@@ -33,12 +33,13 @@ from src.handlers.media_handlers import (
 )
 from src.handlers.admin_handler import (
     admin, admin_menu_handler, handle_folder_path, handle_folder_permissions,
-    handle_remove_folder, add_user, add_user_first_name, add_user_last_name, 
+    handle_remove_folder, handle_add_user, add_user_first_name, add_user_last_name, 
     handle_remove_user, handle_select_users, handle_select_folder, cancel as admin_cancel,
     ADMIN_MENU, ADD_FOLDER, REMOVE_FOLDER, ADD_USER, REMOVE_USER,
     FOLDER_PATH, USER_ID, FOLDER_PERMISSIONS, SELECT_FOLDER, SELECT_USERS,
     BROWSE_FOLDERS, SELECT_SUBFOLDER, CREATE_SUBFOLDER, browse_folders,
-    select_subfolder, create_subfolder, ADMIN_USER_FIRST_NAME, ADMIN_USER_LAST_NAME
+    select_subfolder, create_subfolder, ADMIN_USER_FIRST_NAME, ADMIN_USER_LAST_NAME,
+    ADMIN_ADD_USER
 )
 from src.utils.error_utils import handle_error
 from src.utils.session_utils import SESSION_TIMEOUT
@@ -147,7 +148,7 @@ def main() -> None:
                 SELECT_FOLDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_select_folder)],
                 SELECT_USERS: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_select_users)],
                 REMOVE_FOLDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_remove_folder)],
-                ADD_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_user)],
+                ADD_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_add_user)],
                 ADMIN_USER_FIRST_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_user_first_name)],
                 ADMIN_USER_LAST_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_user_last_name)],
                 REMOVE_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_remove_user)],
