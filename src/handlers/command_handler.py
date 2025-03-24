@@ -129,11 +129,6 @@ async def handle_category(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     
                     logger.info(f"Из них {len(folders)} папок")
                     
-                    if not folders:
-                        # Если подпапок нет, создаем сессию прямо в выбранной папке
-                        logger.info(f"Подпапки не найдены в {selected_folder}, создаем сессию в текущей папке")
-                        return await start_session(update, context, selected_folder, selected_folder)
-                    
                     # Сохраняем список подпапок
                     state_manager.set_data(user_id, "folders", folders)
                     
@@ -144,19 +139,23 @@ async def handle_category(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     # Ограничиваем количество папок в одном сообщении
                     MAX_FOLDERS_PER_MESSAGE = 20
                     
-                    # Формируем клавиатуру
-                    for i, folder in enumerate(folders, 1):
-                        folder_name = folder.name
-                        keyboard.append([f"{i}. {folder_name}"])
+                    # Добавляем существующие папки
+                    if folders:
+                        # Формируем клавиатуру
+                        for i, folder in enumerate(folders, 1):
+                            folder_name = folder.name
+                            keyboard.append([f"{i}. {folder_name}"])
+                            
+                            # Добавляем папку в сообщение только если не превышаем лимит
+                            if i <= MAX_FOLDERS_PER_MESSAGE:
+                                message += f"{i}. 📁 {folder_name}\n"
                         
-                        # Добавляем папку в сообщение только если не превышаем лимит
-                        if i <= MAX_FOLDERS_PER_MESSAGE:
-                            message += f"{i}. 📁 {folder_name}\n"
-                    
-                    # Если папок больше, чем MAX_FOLDERS_PER_MESSAGE, добавляем уведомление
-                    if len(folders) > MAX_FOLDERS_PER_MESSAGE:
-                        message += f"\n... и еще {len(folders) - MAX_FOLDERS_PER_MESSAGE} папок.\n"
-                        message += "Выберите номер папки из клавиатуры ниже.\n"
+                        # Если папок больше, чем MAX_FOLDERS_PER_MESSAGE, добавляем уведомление
+                        if len(folders) > MAX_FOLDERS_PER_MESSAGE:
+                            message += f"\n... и еще {len(folders) - MAX_FOLDERS_PER_MESSAGE} папок.\n"
+                            message += "Выберите номер папки из клавиатуры ниже.\n"
+                    else:
+                        message = f"📂 В папке '{selected_folder}' нет подпапок.\n\n"
                     
                     # Добавляем опцию создания сессии в текущей папке
                     keyboard.append(["📝 Использовать текущую папку"])
