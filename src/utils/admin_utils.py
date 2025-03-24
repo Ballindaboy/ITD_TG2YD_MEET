@@ -7,10 +7,6 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-# Пути к файлам данных
-ALLOWED_FOLDERS_FILE = os.path.join(DATA_DIR, 'allowed_folders.json')
-ALLOWED_USERS_FILE = os.path.join(DATA_DIR, 'allowed_users.json')
-
 # Кеш данных для минимизации обращений к файловой системе
 _allowed_folders_cache = None
 _allowed_users_cache = None
