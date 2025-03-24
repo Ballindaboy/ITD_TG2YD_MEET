@@ -356,14 +356,12 @@ def get_user_data(user_id: int) -> Dict[str, Any]:
     """
     users = load_allowed_users()
     
-    # Преобразуем ID пользователя в строку, так как ключи в JSON - строки
-    user_id_str = str(user_id)
+    # Ищем пользователя в списке
+    for user in users:
+        if user['id'] == user_id:
+            return user
     
-    if user_id_str in users:
-        user_data = users[user_id_str].copy()
-        user_data['id'] = user_id  # Добавляем ID в данные
-        return user_data
-    
+    # Если пользователь не найден, возвращаем базовую структуру
     return {'id': user_id, 'username': None, 'first_name': None, 'last_name': None, 'is_admin': False}
 
 def update_user_data(user_id: int, first_name: Optional[str] = None, 
