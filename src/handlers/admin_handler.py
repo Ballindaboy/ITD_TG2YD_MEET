@@ -79,6 +79,14 @@ async def admin_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     """Обработчик выбора действия в административном меню"""
     text = update.message.text
     
+    if text == "🔙 Выход":
+        # Выход из админ-панели с удалением клавиатуры
+        await update.message.reply_text(
+            "Выход из админ-панели.",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        return ConversationHandler.END
+    
     if text == "📁 Добавить папку":
         # Инициализируем текущий путь для навигации
         context.user_data["current_path"] = "/"
@@ -226,14 +234,6 @@ async def admin_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         
         return ADMIN_MENU
-    
-    elif text == "🔙 Выход":
-        await update.message.reply_text(
-            "✅ Выход из административного меню",
-            reply_markup=ReplyKeyboardRemove()
-        )
-        
-        return ConversationHandler.END
     
     else:
         await update.message.reply_text(
