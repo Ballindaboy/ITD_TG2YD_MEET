@@ -3,30 +3,88 @@ import os
 import yadisk
 import tempfile
 import time
+import random
+import socket
 from config.config import YANDEX_DISK_TOKEN
 import re
 
 logger = logging.getLogger(__name__)
 
 class YaDiskHelper:
-    def __init__(self):
-        self.disk = yadisk.YaDisk(token=YANDEX_DISK_TOKEN)
-        self._check_connection()
+    def __init__(self, skip_connection_check=False):
+        # Увеличиваем таймауты по умолчанию
+        timeout = 60.0
+        self.disk = yadisk.YaDisk(token=YANDEX_DISK_TOKEN, timeout=timeout)
+        # Флаг для работы в офлайн режиме
+        self.offline_mode = False
+        
+        if not skip_connection_check:
+            self._check_connection()
+        else:
+            logger.warning("Проверка подключения к Яндекс.Диску пропущена")
+    
+    def set_offline_mode(self, offline=True):
+        """Устанавливает режим работы без Яндекс.Диска"""
+        if offline:
+            logger.warning("Яндекс.Диск переключен в ОФЛАЙН режим. Все операции с диском будут симулированы.")
+        else:
+            logger.info("Яндекс.Диск переключен в ОНЛАЙН режим.")
+        self.offline_mode = offline
     
     def _check_connection(self):
         """Проверяет подключение к Яндекс.Диску"""
         try:
+            logger.info("Проверка подключения к Яндекс.Диску...")
+            socket_timeout = socket.getdefaulttimeout()
+            socket.setdefaulttimeout(20)  # увеличиваем таймаут сокета
+            
             if not self.disk.check_token():
                 raise ValueError("Неправильный токен Яндекс.Диска!")
+            
+            logger.info("Подключение к Яндекс.Диску успешно установлено")
+            socket.setdefaulttimeout(socket_timeout)  # восстанавливаем исходный таймаут
+            self.offline_mode = False
         except Exception as e:
+            logger.error(f"Ошибка при проверке подключения к Яндекс.Диску: {str(e)}")
             if "timeout" in str(e).lower():
                 logger.warning("Превышено время ожидания при проверке токена Яндекс.Диска. Продолжаем работу с предположением, что токен валиден.")
             else:
-                logger.error(f"Ошибка при проверке токена Яндекс.Диска: {str(e)}")
-                raise
+                logger.warning(f"Проблема с подключением к Яндекс.Диску: {str(e)}. Продолжаем работу, но операции с диском могут быть недоступны.")
+            
+            # Автоматически переключаемся в офлайн режим при ошибке соединения
+            self.set_offline_mode(True)
+    
+    def test_connection(self, timeout=10.0) -> bool:
+        """Тестирует соединение с Яндекс.Диском с указанным таймаутом
+        
+        Returns:
+            bool: True, если соединение установлено, False в противном случае
+        """
+        try:
+            logger.info(f"Тестирование соединения с Яндекс.Диском (таймаут: {timeout}с)...")
+            socket_timeout = socket.getdefaulttimeout()
+            socket.setdefaulttimeout(timeout)
+            
+            # Проверяем доступность сервиса
+            result = self.disk.get_disk_info()
+            
+            socket.setdefaulttimeout(socket_timeout)
+            logger.info(f"Соединение с Яндекс.Диском успешно (свободно {result['total_space'] - result['used_space']} байт)")
+            self.offline_mode = False
+            return True
+        except Exception as e:
+            logger.error(f"Ошибка при тестировании соединения с Яндекс.Диском: {str(e)}")
+            socket.setdefaulttimeout(socket_timeout)
+            # Автоматически переключаемся в офлайн режим при ошибке соединения
+            self.set_offline_mode(True)
+            return False
     
     def ensure_folder_exists(self, path):
         """Проверяет существование папки и создает ее при необходимости"""
+        if self.offline_mode:
+            logger.info(f"[ОФЛАЙН] Симуляция создания директории: {path}")
+            return True
+            
         if not self.disk.exists(path):
             logger.info(f"Создаем директорию: {path}")
             # Создаем каждый уровень папок
@@ -36,12 +94,23 @@ class YaDiskHelper:
                 if part:
                     current_path = f"{current_path}/{part}"
                     if not self.disk.exists(current_path):
-                        self.disk.mkdir(current_path)
+                        try:
+                            self.disk.mkdir(current_path)
+                        except Exception as e:
+                            if "уже существует" in str(e).lower() or "already exists" in str(e).lower():
+                                logger.warning(f"Папка {current_path} уже существует. Продолжаем.")
+                            else:
+                                raise
             return True
         return False
     
     def search_folder(self, parent_path: str, query: str):
         """Ищет папки в указанном пути по запросу"""
+        if self.offline_mode:
+            logger.info(f"[ОФЛАЙН] Симуляция поиска папки '{query}' в '{parent_path}'")
+            # Возвращаем пустой список в офлайн режиме
+            return []
+            
         result = []
         
         try:
@@ -70,6 +139,10 @@ class YaDiskHelper:
         
         folder_path = f"{parent_path}/{safe_folder_name}"
         
+        if self.offline_mode:
+            logger.info(f"[ОФЛАЙН] Симуляция создания папки: {folder_path}")
+            return folder_path
+            
         try:
             # Проверяем существование родительской папки
             if not self.disk.exists(parent_path):
@@ -88,6 +161,13 @@ class YaDiskHelper:
     
     def upload_file(self, local_path: str, remote_path: str, progress_callback=None, overwrite=False):
         """Загружает файл на Яндекс.Диск"""
+        
+        # В режиме офлайн только логируем действия
+        if self.offline_mode:
+            file_size = os.path.getsize(local_path) if os.path.exists(local_path) else 0
+            logger.info(f"[ОФЛАЙН] Симуляция загрузки файла: {remote_path} ({file_size} байт)")
+            return True
+            
         retry_count = 0
         max_retries = 3
         retry_delay = 2  # секунды
@@ -149,6 +229,10 @@ class YaDiskHelper:
     
     def get_download_link(self, path: str) -> str:
         """Получает ссылку на скачивание файла"""
+        if self.offline_mode:
+            logger.info(f"[ОФЛАЙН] Симуляция получения ссылки на скачивание: {path}")
+            return f"https://offline-mode.example.com/download?path={path}"
+            
         return self.disk.get_download_link(path)
     
     def _create_temp_file(self, content=''):
@@ -160,6 +244,10 @@ class YaDiskHelper:
     
     def create_text_file(self, path: str, content: str = ""):
         """Создает текстовый файл по указанному пути"""
+        if self.offline_mode:
+            logger.info(f"[ОФЛАЙН] Симуляция создания текстового файла: {path}")
+            return True
+            
         try:
             # Проверяем существование родительской папки
             parent_path = os.path.dirname(path)
@@ -180,6 +268,11 @@ class YaDiskHelper:
     
     def append_to_text_file(self, path: str, content: str):
         """Добавляет текст в существующий файл"""
+        if self.offline_mode:
+            logger.info(f"[ОФЛАЙН] Симуляция добавления текста в файл: {path}")
+            logger.debug(f"[ОФЛАЙН] Содержимое: {content[:100]}...")
+            return True
+            
         tmp_path = None
         retry_count = 0
         max_retries = 3
@@ -252,11 +345,15 @@ class YaDiskHelper:
     
     def rename_folder(self, old_path: str, new_name: str):
         """Переименовывает папку"""
-        try:
-            # Получаем родительскую директорию
-            parent_dir = os.path.dirname(old_path)
-            new_path = f"{parent_dir}/{new_name}"
+        # Получаем родительскую директорию
+        parent_dir = os.path.dirname(old_path)
+        new_path = f"{parent_dir}/{new_name}"
+        
+        if self.offline_mode:
+            logger.info(f"[ОФЛАЙН] Симуляция переименования папки: {old_path} -> {new_path}")
+            return new_path
             
+        try:
             # Проверяем существование новой папки
             if self.disk.exists(new_path):
                 raise ValueError(f"Папка с именем {new_name} уже существует")

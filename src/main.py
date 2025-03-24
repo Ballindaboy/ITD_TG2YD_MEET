@@ -2,8 +2,18 @@ import logging
 import os
 import signal
 import atexit
+import time
 import sys
+import argparse
 from contextlib import suppress
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    filters,
+    ConversationHandler,
+    CallbackQueryHandler
+)
 
 # Сторонние библиотеки
 from telegram import Update
@@ -18,19 +28,25 @@ from telegram.ext import (
 from telegram.error import TelegramError, NetworkError
 
 # Внутренние модули
-from config.config import validate_config, TELEGRAM_TOKEN, DATA_DIR
+from config.config import validate_config, TELEGRAM_TOKEN, DATA_DIR, ADMIN_USER_ID
 from config.logging_config import configure_logging
 from src.handlers.command_handler import (
     start, help_command, new_meeting, handle_category, navigate_folders,
     switch_meeting, current_meeting, cancel, create_folder,
     handle_session_callback, end_session_and_show_summary,
-    CHOOSE_FOLDER, NAVIGATE_SUBFOLDERS, CREATE_FOLDER
+    CHOOSE_FOLDER, NAVIGATE_SUBFOLDERS, CREATE_FOLDER,
+    start_command,
+    help_command,
+    cancel_command,
+    session_command,
+    select_client_command
 )
 from src.handlers.file_handler import handle_message, handle_text, handle_file
-from src.handlers.media_handlers import (
-    handle_photo, handle_video, handle_voice, 
-    handle_document, process_transcription, process_transcription_edit
-)
+from src.handlers.media_handlers.voice_handler import process_transcription, process_transcription_edit
+from src.handlers.media_handlers.photo_handler import handle_photo
+from src.handlers.media_handlers.video_handler import handle_video
+from src.handlers.media_handlers.document_handler import handle_document
+from src.handlers.media_handlers.voice_handler import handle_voice
 from src.handlers.admin_handler import (
     admin, admin_menu_handler, handle_folder_path, handle_folder_permissions,
     handle_remove_folder, handle_add_user, add_user_first_name, add_user_last_name, 
@@ -41,25 +57,32 @@ from src.handlers.admin_handler import (
     select_subfolder, create_subfolder, ADMIN_USER_FIRST_NAME, ADMIN_USER_LAST_NAME,
     ADMIN_ADD_USER
 )
-from src.utils.error_utils import handle_error
+from src.utils.error_utils import error_handler
 from src.utils.session_utils import SESSION_TIMEOUT
+from src.utils.yadisk_helper import YaDiskHelper
 
 # Настройка логирования
+configure_logging()
 logger = logging.getLogger(__name__)
 
 # Путь к файлу блокировки
 LOCK_FILE = os.path.join(DATA_DIR, 'bot.lock')
 
-def cleanup():
-    """Очистка ресурсов при завершении работы приложения"""
-    logger.info("Завершение работы приложения")
-    # Удаляем файл блокировки при выходе
-    with suppress(FileNotFoundError):
-        os.remove(LOCK_FILE)
+# Глобальный объект YaDiskHelper
+yadisk_helper = None
 
-def signal_handler(sig, frame):
-    """Обработчик сигналов для корректного завершения работы"""
-    logger.info(f"Получен сигнал {sig}, завершаем работу")
+def cleanup():
+    """Очистка ресурсов при выходе"""
+    try:
+        if os.path.exists(LOCK_FILE):
+            os.remove(LOCK_FILE)
+            logger.info(f"Файл блокировки {LOCK_FILE} удален.")
+    except Exception as e:
+        logger.error(f"Ошибка при удалении файла блокировки: {e}")
+
+def signal_handler(signum, frame):
+    """Обработчик сигналов"""
+    logger.info(f"Получен сигнал {signum}, завершение работы...")
     cleanup()
     sys.exit(0)
 
@@ -87,20 +110,61 @@ async def error_handler(update: Update, context) -> None:
 
 def main() -> None:
     """Основная функция для запуска бота"""
-    # Проверка существования файла блокировки
+    # Парсинг аргументов командной строки
+    parser = argparse.ArgumentParser(description='Telegram бот для работы с Яндекс.Диском')
+    parser.add_argument('--offline', action='store_true', help='Запустить бота в офлайн-режиме без Яндекс.Диска')
+    args = parser.parse_args()
+    
+    # Проверяем, не запущен ли уже бот
     if os.path.exists(LOCK_FILE):
         logger.warning(f"Файл блокировки {LOCK_FILE} существует. Возможно, бот уже запущен.")
-        lock_file_age = time.time() - os.path.getmtime(LOCK_FILE)
-        if lock_file_age > 3600:  # Если файл старше часа, то, вероятно, он остался от предыдущего запуска
-            logger.info(f"Файл блокировки старше часа ({lock_file_age:.1f} сек). Удаляем его.")
-            os.remove(LOCK_FILE)
-        else:
-            logger.error("Выход, т.к. бот уже запущен.")
-            return
+        try:
+            # Проверяем, существует ли процесс
+            with open(LOCK_FILE, 'r') as f:
+                pid = int(f.read().strip())
+            try:
+                # Проверяем, активен ли процесс
+                os.kill(pid, 0)
+                logger.error("Выход, т.к. бот уже запущен.")
+                return
+            except OSError:
+                # Процесс не существует, удаляем файл блокировки
+                logger.warning(f"Процесс с PID {pid} не существует, удаляем файл блокировки.")
+                os.remove(LOCK_FILE)
+        except Exception as e:
+            # Удаляем файл блокировки в случае ошибки
+            logger.warning(f"Ошибка при проверке процесса: {e}. Удаляем файл блокировки.")
+            try:
+                os.remove(LOCK_FILE)
+            except:
+                logger.error(f"Не удалось удалить файл блокировки {LOCK_FILE}.")
+                return
 
-    # Создание файла блокировки
-    with open(LOCK_FILE, 'w') as f:
+    # Создаем файл блокировки
+    with open(LOCK_FILE, "w") as f:
         f.write(str(os.getpid()))
+    
+    # Инициализируем глобальный объект YaDiskHelper
+    global yadisk_helper
+    yadisk_helper = YaDiskHelper(skip_connection_check=True)
+    
+    # Если указан флаг офлайн-режима, принудительно переключаем
+    if args.offline:
+        logger.warning("Запуск в принудительном ОФЛАЙН-режиме. Яндекс.Диск не будет использоваться.")
+        yadisk_helper.set_offline_mode(True)
+    else:
+        # Проверяем соединение с Яндекс.Диском
+        connection_ok = yadisk_helper.test_connection(timeout=15.0)
+        if not connection_ok:
+            logger.warning("Не удалось установить соединение с Яндекс.Диском. Бот будет работать в офлайн-режиме.")
+        else:
+            logger.info("Соединение с Яндекс.Диском установлено успешно.")
+    
+    # Получаем токен бота
+    token = TELEGRAM_TOKEN
+    
+    # Устанавливаем сессионное время жизни
+    session_lifetime = SESSION_TIMEOUT.total_seconds()
     
     # Регистрация обработчиков сигналов и функции очистки
     signal.signal(signal.SIGINT, signal_handler)
@@ -112,7 +176,7 @@ def main() -> None:
         validate_config()
         
         # Настройка приложения Telegram
-        application = Application.builder().token(TELEGRAM_TOKEN).build()
+        application = Application.builder().token(token).build()
         
         # Регистрация глобального обработчика ошибок
         application.add_error_handler(error_handler)
@@ -120,48 +184,65 @@ def main() -> None:
         # Команды для всех пользователей
         application.add_handler(CommandHandler("start", start))
         application.add_handler(CommandHandler("help", help_command))
-        application.add_handler(CommandHandler("switch", switch_meeting))
+        application.add_handler(CommandHandler("cancel", cancel))
+        
+        # Создаем обработчик для создания новой встречи
+        application.add_handler(CommandHandler("meet", new_meeting))
+        
+        # Добавляем обработчик для просмотра и переключения между встречами
+        application.add_handler(CommandHandler("meetings", switch_meeting))
         application.add_handler(CommandHandler("current", current_meeting))
         
-        # Обработчик колбэков от кнопок сессии
-        application.add_handler(CallbackQueryHandler(handle_session_callback, pattern=r"^(end_session|extend_session|add_final_comment)$"))
+        # Обработчик для завершения встречи
+        application.add_handler(CommandHandler("end", end_session_and_show_summary))
         
-        # Обработчик создания новой встречи
-        new_meeting_handler = ConversationHandler(
-            entry_points=[CommandHandler("new", new_meeting)],
+        # Обработчик callback-запросов (нажатий на кнопки)
+        application.add_handler(CallbackQueryHandler(handle_session_callback, pattern=r'^session_'))
+        
+        # Добавляем обработчик диалога выбора папки
+        conv_handler = ConversationHandler(
+            entry_points=[
+                CommandHandler("client", handle_category),
+                CallbackQueryHandler(navigate_folders, pattern=r'^folder_')
+            ],
             states={
-                CHOOSE_FOLDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_category)],
-                NAVIGATE_SUBFOLDERS: [MessageHandler(filters.TEXT & ~filters.COMMAND, navigate_folders)],
-                CREATE_FOLDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, create_folder)]
+                CHOOSE_FOLDER: [
+                    CallbackQueryHandler(handle_category, pattern=r'^category_'),
+                    CallbackQueryHandler(navigate_folders, pattern=r'^folder_'),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_category)
+                ],
+                NAVIGATE_SUBFOLDERS: [
+                    CallbackQueryHandler(navigate_folders, pattern=r'^folder_'),
+                    CallbackQueryHandler(handle_category, pattern=r'^back_'),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, navigate_folders)
+                ],
+                CREATE_FOLDER: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, create_folder)
+                ]
             },
-            fallbacks=[CommandHandler("cancel", cancel)]
+            fallbacks=[CommandHandler("cancel", cancel)],
+            name="folder_conversation",
+            persistent=False
         )
-        application.add_handler(new_meeting_handler)
+        application.add_handler(conv_handler)
         
-        # Обработчик административных команд
-        admin_handler = ConversationHandler(
-            entry_points=[CommandHandler("admin", admin)],
-            states={
-                ADMIN_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_menu_handler)],
-                FOLDER_PATH: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_folder_path)],
-                FOLDER_PERMISSIONS: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_folder_permissions)],
-                SELECT_FOLDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_select_folder)],
-                SELECT_USERS: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_select_users)],
-                REMOVE_FOLDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_remove_folder)],
-                ADD_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_add_user)],
-                ADMIN_USER_FIRST_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_user_first_name)],
-                ADMIN_USER_LAST_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_user_last_name)],
-                REMOVE_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_remove_user)],
-                BROWSE_FOLDERS: [MessageHandler(filters.TEXT & ~filters.COMMAND, browse_folders)],
-                SELECT_SUBFOLDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, select_subfolder)],
-                CREATE_SUBFOLDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, create_subfolder)]
-            },
-            fallbacks=[CommandHandler("cancel", admin_cancel)]
-        )
-        application.add_handler(admin_handler)
-        
-        # Обработчики текстовых сообщений и файлов
+        # Обработчики текстовых сообщений
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+        
+        # Обработчики исправленной транскрипции голосовых сообщений
+        application.add_handler(MessageHandler(
+            filters.TEXT & ~filters.COMMAND, 
+            process_transcription_edit, 
+            block=False
+        ))
+        
+        application.add_handler(MessageHandler(
+            filters.TEXT & ~filters.COMMAND, 
+            process_transcription, 
+            block=False
+        ))
+        
+        # Обработчики медиафайлов
         application.add_handler(MessageHandler(filters.PHOTO, lambda update, context: handle_file(update, context, handle_photo)))
         application.add_handler(MessageHandler(filters.VOICE, lambda update, context: handle_file(update, context, handle_voice)))
         application.add_handler(MessageHandler(filters.AUDIO, lambda update, context: handle_file(update, context, handle_voice)))
@@ -170,21 +251,17 @@ def main() -> None:
         
         # Настройка параметров сессий
         # Устанавливаем время жизни сессии в секундах (по умолчанию 30 минут)
-        session_timeout_seconds = int(SESSION_TIMEOUT.total_seconds())
+        session_timeout_seconds = int(session_lifetime)
         application.bot_data["session_timeout"] = session_timeout_seconds
         logger.info(f"Время жизни сессии установлено: {session_timeout_seconds} секунд")
         
         # Запуск бота
         logger.info("Бот запущен и готов к работе")
-        application.run_polling(drop_pending_updates=True)
-    
+        application.run_polling()
     except Exception as e:
-        logger.critical(f"Критическая ошибка при запуске бота: {e}", exc_info=True)
+        logger.error(f"Ошибка при запуске бота: {e}", exc_info=True)
         cleanup()
+        sys.exit(1)
 
 if __name__ == "__main__":
-    # Настраиваем логирование
-    configure_logging()
-    
-    import time
     main() 
