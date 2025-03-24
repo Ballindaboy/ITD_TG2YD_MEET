@@ -18,6 +18,15 @@ def ensure_data_dir_exists():
 def load_allowed_folders():
     """Загружает список разрешенных папок из файла"""
     try:
+        # Проверяем существование файла и директории
+        ensure_data_dir_exists()
+        if not os.path.exists(FOLDERS_FILE):
+            # Если файл не существует, создаем его с пустым списком
+            with open(FOLDERS_FILE, 'w') as f:
+                json.dump([], f)
+            return []
+        
+        # Если файл существует, загружаем данные
         with open(FOLDERS_FILE, 'r') as f:
             return json.load(f)
     except Exception as e:
@@ -193,6 +202,15 @@ def list_allowed_folders():
 def load_allowed_users():
     """Загружает список разрешенных пользователей из файла"""
     try:
+        # Проверяем существование файла и директории
+        ensure_data_dir_exists()
+        if not os.path.exists(USERS_FILE):
+            # Если файл не существует, создаем его с пустым списком
+            with open(USERS_FILE, 'w') as f:
+                json.dump([], f)
+            return []
+            
+        # Если файл существует, загружаем данные
         with open(USERS_FILE, 'r') as f:
             return json.load(f)
     except Exception as e:
