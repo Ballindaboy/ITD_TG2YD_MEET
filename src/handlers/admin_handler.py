@@ -284,7 +284,7 @@ async def browse_folders(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         
         if 0 <= folder_idx < len(folders):
             selected_folder = folders[folder_idx]
-            selected_path = normalize_path(selected_folder.path)
+            selected_path = folder_navigator.normalize_path(selected_folder.path)
             
             logger.info(f"Администратор выбрал папку: {selected_path}")
             
