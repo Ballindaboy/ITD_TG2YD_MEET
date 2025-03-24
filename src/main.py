@@ -44,8 +44,8 @@ from src.handlers.admin_handler import (
     select_subfolder, create_subfolder, ADMIN_USER_FIRST_NAME, ADMIN_USER_LAST_NAME,
     ADMIN_ADD_USER
 )
-from src.utils.error_utils import error_handler, handle_error
 from src.utils.session_utils import SESSION_TIMEOUT
+from src.utils.error_utils import handle_error
 from src.utils.yadisk_helper import YaDiskHelper
 
 # Настройка логирования
