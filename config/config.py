@@ -21,6 +21,13 @@ UPLOAD_DIR = DATA_DIR / 'uploads'  # Директория для временн�
 FOLDERS_FILE = DATA_DIR / 'allowed_folders.json'
 USERS_FILE = DATA_DIR / 'allowed_users.json'
 
+# Корневые директории на Яндекс.Диске
+ROOT_DIRS = {
+    "BASE_FOLDER": "Telegram_Bot",
+    "MEETINGS_FOLDER": "Telegram_Bot/meetings",
+    "DRAFTS_FOLDER": "Telegram_Bot/drafts"
+}
+
 # Настройки логирования
 LOG_LEVEL = getattr(logging, os.getenv('LOG_LEVEL', 'INFO').upper())
 
