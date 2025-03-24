@@ -1,8 +1,23 @@
 import json
 import logging
 from config.config import FOLDERS_FILE, USERS_FILE
+import os
+from typing import Dict, List, Optional, Any, Tuple, Set, Union
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+# Пути к файлам данных
+ALLOWED_FOLDERS_FILE = os.path.join(DATA_DIR, 'allowed_folders.json')
+ALLOWED_USERS_FILE = os.path.join(DATA_DIR, 'allowed_users.json')
+
+# Кеш данных для минимизации обращений к файловой системе
+_allowed_folders_cache = None
+_allowed_users_cache = None
+
+def ensure_data_dir_exists():
+    """Проверяет существование директории для данных и создает ее при необходимости."""
+    os.makedirs(DATA_DIR, exist_ok=True)
 
 def load_allowed_folders():
     """Загружает список разрешенных папок из файла"""
@@ -309,4 +324,26 @@ def is_folder_allowed_for_user(folder_path, user_id):
 def get_timestamp():
     """Возвращает текущий timestamp"""
     from datetime import datetime
-    return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S") 
+    return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
+def get_user_data(user_id: int) -> Dict[str, Any]:
+    """
+    Получает данные пользователя по его ID.
+    
+    Args:
+        user_id: ID пользователя
+        
+    Returns:
+        Словарь с данными пользователя или пустой словарь, если пользователь не найден
+    """
+    users = load_allowed_users()
+    
+    # Преобразуем ID пользователя в строку, так как ключи в JSON - строки
+    user_id_str = str(user_id)
+    
+    if user_id_str in users:
+        user_data = users[user_id_str].copy()
+        user_data['id'] = user_id  # Добавляем ID в данные
+        return user_data
+    
+    return {'id': user_id, 'username': None, 'first_name': None, 'last_name': None, 'is_admin': False} 
