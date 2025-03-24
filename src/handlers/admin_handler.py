@@ -360,55 +360,32 @@ async def select_subfolder(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     text = update.message.text
     current_path = context.user_data.get("current_path", "/")
     
-    if text == "❌ Отмена":
+    if text == BUTTON_CANCEL:
         await update.message.reply_text(
             "❌ Операция отменена",
             reply_markup=ReplyKeyboardRemove()
         )
         return await admin(update, context)
     
-    if text == "🔙 К выбору папок":
+    if text == BUTTON_RETURN_TO_ROOT:
         # Возвращаемся к корневому выбору папок
-        context.user_data["current_path"] = "/"
-        
-        try:
-            items = list(yadisk_helper.disk.listdir("/"))
-            folders = [item for item in items if item.type == "dir"]
-            context.user_data["folders"] = folders
-            
-            keyboard = []
-            
-            for i, folder in enumerate(folders, 1):
-                keyboard.append([f"{i}. {folder.name}"])
-            
-            keyboard.append(["📁 Создать новую папку"])
-            keyboard.append(["🔙 Назад"])
-            
-            await update.message.reply_text(
-                "📂 Выберите папку для добавления в список разрешенных:",
-                reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
-            )
-            
-            return BROWSE_FOLDERS
-        except Exception as e:
-            logger.error(f"Ошибка при возврате к выбору папок: {str(e)}", exc_info=True)
-            return await admin(update, context)
+        await folder_navigator.show_folders(update, context, "/")
+        return BROWSE_FOLDERS
     
-    if text == "📁 Создать подпапку":
+    if text == BUTTON_CREATE_FOLDER:
         await update.message.reply_text(
-            f"📁 Введите название новой подпапки в '{current_path}':",
-            reply_markup=ReplyKeyboardMarkup([["🔙 Назад"]], one_time_keyboard=True, resize_keyboard=True)
+            f"📁 Введите название новой папки в '{current_path}':",
+            reply_markup=ReplyKeyboardMarkup([[BUTTON_BACK]], one_time_keyboard=True, resize_keyboard=True)
         )
         return CREATE_SUBFOLDER
     
-    if text == "✅ Добавить эту папку":
+    if text == BUTTON_ADD_FOLDER or text == "✅ Добавить в разрешенные":
         # Добавляем текущую папку в список разрешенных
         success, message = add_allowed_folder(current_path)
         
         if success:
             await update.message.reply_text(
-                f"✅ {message}\n\n"
-                "Хотите добавить пользователей с доступом к этой папке?",
+                f"✅ {message}\n\n" + FOLDER_PERMISSIONS_PROMPT,
                 reply_markup=ReplyKeyboardMarkup([["Да", "Нет"]], one_time_keyboard=True, resize_keyboard=True)
             )
             context.user_data["current_folder"] = current_path
@@ -416,14 +393,14 @@ async def select_subfolder(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         else:
             await update.message.reply_text(
                 f"❌ {message}",
-                reply_markup=ReplyKeyboardMarkup([["🔙 Назад"]], one_time_keyboard=True, resize_keyboard=True)
+                reply_markup=ReplyKeyboardMarkup([[BUTTON_BACK]], one_time_keyboard=True, resize_keyboard=True)
             )
             return ADMIN_MENU
     
     # Если формат ввода неверный
     await update.message.reply_text(
         "❌ Пожалуйста, выберите действие из предложенного списка",
-        reply_markup=ReplyKeyboardMarkup([["🔙 К выбору папок"], ["❌ Отмена"]], one_time_keyboard=True, resize_keyboard=True)
+        reply_markup=ReplyKeyboardMarkup([[BUTTON_RETURN_TO_ROOT], [BUTTON_CANCEL]], one_time_keyboard=True, resize_keyboard=True)
     )
     return SELECT_SUBFOLDER
 
@@ -486,7 +463,7 @@ async def handle_folder_path(update: Update, context: ContextTypes.DEFAULT_TYPE)
     """Обработчик ввода пути папки при добавлении"""
     text = update.message.text
     
-    if text == "🔙 Назад":
+    if text == BUTTON_BACK:
         return await admin(update, context)
     
     # Добавляем папку в список разрешенных (без привязки к категории)
@@ -494,8 +471,7 @@ async def handle_folder_path(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     if success:
         await update.message.reply_text(
-            f"✅ {message}\n\n"
-            "Хотите добавить пользователей с доступом к этой папке?",
+            f"✅ {message}\n\n" + FOLDER_PERMISSIONS_PROMPT,
             reply_markup=ReplyKeyboardMarkup([["Да", "Нет"]], one_time_keyboard=True, resize_keyboard=True)
         )
         context.user_data["current_folder"] = text
@@ -504,7 +480,7 @@ async def handle_folder_path(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text(
             f"❌ {message}\n\n"
             "Попробуйте еще раз или нажмите '🔙 Назад' для возврата в меню.",
-            reply_markup=ReplyKeyboardMarkup([["🔙 Назад"]], one_time_keyboard=True, resize_keyboard=True)
+            reply_markup=ReplyKeyboardMarkup([[BUTTON_BACK]], one_time_keyboard=True, resize_keyboard=True)
         )
         return FOLDER_PATH
 
