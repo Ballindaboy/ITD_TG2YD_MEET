@@ -1,10 +1,11 @@
 import logging
-from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
-from telegram.ext import ContextTypes, ConversationHandler
+from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram.ext import ContextTypes, ConversationHandler, CallbackContext
 from src.utils.state_manager import state_manager
 from src.utils.yadisk_helper import YaDiskHelper
-from src.utils.admin_utils import load_allowed_folders, get_allowed_folders_for_user, is_folder_allowed_for_user
+from src.utils.admin_utils import load_allowed_folders, get_allowed_folders_for_user, is_folder_allowed_for_user, get_user_data
 import os
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 yadisk_helper = YaDiskHelper()
@@ -276,23 +277,51 @@ async def start_session(update: Update, context: ContextTypes.DEFAULT_TYPE, root
     from src.utils.state_manager import SessionState
     
     user_id = update.effective_user.id
+    
+    # Нормализуем пути к папкам
+    root_folder = normalize_path(root_folder)
+    folder_path = normalize_path(folder_path)
     folder_name = os.path.basename(folder_path)
+    
+    # Получаем данные пользователя для добавления в историю
+    user_data = get_user_data(user_id)
+    user_full_name = None
+    if user_data:
+        first_name = user_data.get('first_name', '')
+        last_name = user_data.get('last_name', '')
+        if first_name or last_name:
+            user_full_name = f"{first_name} {last_name}".strip()
     
     try:
         # Создаем сессию
-        session = SessionState(root_folder, folder_path, folder_name)
+        session = SessionState(root_folder, folder_path, folder_name, user_id)
         state_manager.set_session(user_id, session)
         
-        # Создаем текстовый файл для встречи
-        yadisk_helper.create_text_file(session.txt_file_path, "")
+        # Добавляем первое сообщение в историю
+        start_msg = f"Начало встречи в папке: {folder_path}"
+        session.add_message(start_msg, author=user_full_name)
         
+        # Создаем текстовый файл для встречи
+        yadisk_helper.create_text_file(session.txt_file_path, f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {start_msg}")
+        
+        # Уведомляем о создании встречи
         await update.message.reply_text(
             f"🆕 Создана новая встреча:\n"
             f"Папка: {folder_path}\n"
             f"Файл: {session.get_txt_filename()}\n\n"
             f"✍️ Можете отправлять текст, голос, фото или видео.\n"
-            f"Для завершения встречи используйте /switch",
+            f"Для завершения встречи используйте /switch\n\n"
+            f"⏱ Через 10 минут бездействия будет предложено завершить встречу.",
             reply_markup=ReplyKeyboardRemove()
+        )
+        
+        # Планируем запрос о закрытии сессии через 10 минут
+        # Используем job_queue для планирования задачи
+        context.job_queue.run_once(
+            lambda context: check_session_activity(context, user_id),
+            600,  # 10 минут в секундах
+            data=user_id,
+            name=f"session_timeout_{user_id}"
         )
         
         return ConversationHandler.END
@@ -305,6 +334,120 @@ async def start_session(update: Update, context: ContextTypes.DEFAULT_TYPE, root
         )
         return ConversationHandler.END
 
+async def check_session_activity(context: CallbackContext, user_id: int) -> None:
+    """
+    Проверяет активность сессии и предлагает закрыть её при необходимости
+    """
+    # Получаем сессию пользователя
+    session = state_manager.get_session(user_id)
+    if not session:
+        logger.info(f"Сессия для пользователя {user_id} уже закрыта")
+        return
+    
+    # Создаем клавиатуру для ответа
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Завершить встречу", callback_data="end_session")],
+        [InlineKeyboardButton("⏱ Продолжить еще 10 минут", callback_data="extend_session")]
+    ])
+    
+    try:
+        # Отправляем сообщение с предложением закрыть сессию
+        await context.bot.send_message(
+            chat_id=user_id,
+            text="⏱ Прошло 10 минут с момента последней активности.\nХотите завершить текущую встречу?",
+            reply_markup=keyboard
+        )
+    except Exception as e:
+        logger.error(f"Ошибка при отправке уведомления о неактивности: {e}")
+
+async def handle_session_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Обрабатывает ответ на запрос о закрытии сессии
+    """
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    data = query.data
+    
+    if data == "end_session":
+        # Завершаем сессию и показываем сводку
+        await end_session_and_show_summary(update, context)
+    elif data == "extend_session":
+        # Продлеваем сессию еще на 10 минут
+        await query.edit_message_text(
+            text="✅ Встреча продлена еще на 10 минут."
+        )
+        
+        # Планируем новый запрос через 10 минут
+        context.job_queue.run_once(
+            lambda context: check_session_activity(context, user_id),
+            600,  # 10 минут в секундах
+            data=user_id,
+            name=f"session_timeout_{user_id}"
+        )
+
+async def end_session_and_show_summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Завершает сессию и показывает итоговую сводку
+    """
+    user_id = update.effective_user.id
+    session = state_manager.get_session(user_id)
+    
+    if not session:
+        if update.callback_query:
+            await update.callback_query.edit_message_text(
+                text="❌ Нет активной встречи для завершения."
+            )
+        else:
+            await update.message.reply_text(
+                "❌ Нет активной встречи для завершения."
+            )
+        return
+    
+    # Получаем сводку по сессии
+    summary = session.get_session_summary()
+    
+    # Добавляем финальную запись в текстовый файл
+    end_msg = f"Завершение встречи в папке: {session.folder_path}"
+    session.add_message(end_msg)
+    
+    # Обновляем файл на Яндекс.Диске
+    try:
+        # Загружаем текущее содержимое
+        content = yadisk_helper.get_file_content(session.txt_file_path)
+        # Добавляем завершающую запись
+        content += f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {end_msg}"
+        # Обновляем файл
+        yadisk_helper.update_text_file(session.txt_file_path, content)
+    except Exception as e:
+        logger.error(f"Ошибка при обновлении файла встречи: {e}")
+    
+    # Создаем клавиатуру для добавления комментария
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✏️ Добавить комментарий", callback_data="add_final_comment")]
+    ])
+    
+    # Показываем сводку и предлагаем добавить комментарий
+    if update.callback_query:
+        await update.callback_query.edit_message_text(
+            text=f"✅ Встреча завершена\n\n{summary[:3900]}...",  # Ограничиваем размер сообщения
+            reply_markup=keyboard
+        )
+    else:
+        await update.message.reply_text(
+            f"✅ Встреча завершена\n\n{summary[:3900]}...",  # Ограничиваем размер сообщения
+            reply_markup=keyboard
+        )
+    
+    # Очищаем сессию
+    state_manager.clear_session(user_id)
+    
+    # Отменяем запланированные задачи для этого пользователя
+    current_jobs = context.job_queue.get_jobs_by_name(f"session_timeout_{user_id}")
+    for job in current_jobs:
+        job.schedule_removal()
+
 async def switch_meeting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработчик команды /switch - переключение на другую встречу"""
     user_id = update.effective_user.id
@@ -313,11 +456,8 @@ async def switch_meeting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # Проверяем, есть ли активная сессия
     session = state_manager.get_session(user_id)
     if session:
-        # Завершаем текущую сессию
-        state_manager.clear_session(user_id)
-        await update.message.reply_text(
-            "✅ Текущая встреча завершена"
-        )
+        # Завершаем текущую сессию и показываем сводку
+        await end_session_and_show_summary(update, context)
     
     # Начинаем новую встречу
     return await new_meeting(update, context)
@@ -330,10 +470,26 @@ async def current_meeting(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     # Проверяем, есть ли активная сессия
     session = state_manager.get_session(user_id)
     if session:
+        # Получаем данные пользователя
+        user_data = get_user_data(user_id)
+        user_info = ""
+        if user_data:
+            first_name = user_data.get('first_name', '')
+            last_name = user_data.get('last_name', '')
+            if first_name or last_name:
+                user_info = f"👤 Участник: {first_name} {last_name}\n"
+        
+        # Считаем количество файлов и сообщений
+        files_count = len(session.file_history)
+        messages_count = len(session.message_history)
+        
         await update.message.reply_text(
             f"📝 Текущая встреча:\n"
-            f"Папка: {session.folder_path}\n"
-            f"Файл: {session.get_txt_filename()}\n\n"
+            f"📂 Папка: {session.folder_path}\n"
+            f"📄 Файл: {session.get_txt_filename()}\n"
+            f"⏱ Начало: {session.created_at}\n"
+            f"{user_info}"
+            f"📊 Сообщений: {messages_count}, Файлов: {files_count}\n\n"
             f"✍️ Можете отправлять текст, голос, фото или видео."
         )
     else:
