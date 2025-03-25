@@ -1,18 +1,25 @@
 import logging
 from typing import Dict, Any, Optional
 from config.config import get_current_timestamp
+import time
 
 logger = logging.getLogger(__name__)
 
 class SessionState:
     """Класс для хранения данных о текущей сессии встречи"""
-    def __init__(self, root_folder: str, folder_path: str, folder_name: str):
+    def __init__(self, root_folder: str, folder_path: str, folder_name: str, user_id: int):
         self.root_folder = root_folder
         self.folder_path = folder_path
         self.folder_name = folder_name
         self.timestamp = get_current_timestamp()
         self.txt_file_path = f"{folder_path}/{self.timestamp}_visit_{folder_name}.txt"
         self.file_prefix = f"{self.timestamp}_Files_{folder_name}"
+        self.user_id = user_id
+        self.messages = []  # Список сообщений в сессии
+        self.start_time = time.time()
+        self.created_at = time.strftime("%Y-%m-%d %H:%M:%S")
+        self.file_history = []  # Список файлов, загруженных в рамках сессии
+        self.message_history = []  # История сообщений (для совместимости)
     
     def get_txt_filename(self) -> str:
         """Возвращает имя текстового файла"""
@@ -25,6 +32,41 @@ class SessionState:
     def get_media_path(self, extension: str) -> str:
         """Возвращает путь для медиафайла с указанным расширением"""
         return f"{self.folder_path}/{self.file_prefix}.{extension}"
+        
+    def add_message(self, message: str, author: str = "") -> None:
+        """Добавляет сообщение в историю сессии"""
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        author_prefix = f"[{author}] " if author else ""
+        formatted_message = f"[{timestamp}] {author_prefix}{message}"
+        self.messages.append(formatted_message)
+        # Добавляем также в message_history для обратной совместимости
+        self.message_history.append({
+            'text': message,
+            'author': author,
+            'timestamp': timestamp
+        })
+        logger.debug(f"Добавлено сообщение в сессию: {formatted_message[:50]}...")
+        
+    def get_session_summary(self) -> str:
+        """Возвращает сводку по сессии"""
+        duration = time.time() - self.start_time
+        hours, remainder = divmod(int(duration), 3600)
+        minutes, seconds = divmod(remainder, 60)
+        
+        summary = [
+            f"📁 Папка: {self.folder_path}",
+            f"📄 Файл: {self.get_txt_filename()}",
+            f"⏱ Продолжительность: {hours}ч {minutes}м {seconds}с",
+            f"✍️ Количество записей: {len(self.messages)}",
+            "",
+            "📝 История сообщений:"
+        ]
+        
+        # Добавляем последние 10 сообщений (или все, если их меньше 10)
+        for msg in self.messages[-10:]:
+            summary.append(msg)
+            
+        return "\n".join(summary)
 
 class StateManager:
     """Класс для управления состояниями пользователей"""

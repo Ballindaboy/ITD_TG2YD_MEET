@@ -379,4 +379,56 @@ class YaDiskHelper:
             return new_path
         except Exception as e:
             logger.error(f"Ошибка при переименовании папки: {str(e)}", exc_info=True)
-            raise 
+            raise
+            
+    def get_file_content(self, path: str) -> str:
+        """Получает содержимое текстового файла с Яндекс.Диска"""
+        if self.offline_mode:
+            logger.info(f"[ОФЛАЙН] Симуляция получения содержимого файла: {path}")
+            return f"[OFFLINE] Содержимое файла {path}"
+            
+        tmp_path = None
+        try:
+            # Создаем временный файл для скачивания
+            tmp_path = self._create_temp_file()
+            
+            # Скачиваем файл с Яндекс.Диска
+            self.disk.download(path, tmp_path)
+            
+            # Читаем содержимое файла
+            with open(tmp_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+                
+            return content
+        except Exception as e:
+            logger.error(f"Ошибка при получении содержимого файла {path}: {str(e)}", exc_info=True)
+            return ""
+        finally:
+            # Удаляем временный файл
+            if tmp_path and os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+    
+    def update_text_file(self, path: str, content: str) -> bool:
+        """Обновляет содержимое текстового файла на Яндекс.Диске"""
+        if self.offline_mode:
+            logger.info(f"[ОФЛАЙН] Симуляция обновления текстового файла: {path}")
+            logger.debug(f"[ОФЛАЙН] Новое содержимое: {content[:100]}...")
+            return True
+            
+        tmp_path = None
+        try:
+            # Создаем временный файл с новым содержимым
+            tmp_path = self._create_temp_file(content)
+            
+            # Загружаем файл на Яндекс.Диск с перезаписью
+            self.disk.upload(tmp_path, path, overwrite=True)
+            
+            logger.info(f"Файл {path} успешно обновлен")
+            return True
+        except Exception as e:
+            logger.error(f"Ошибка при обновлении файла {path}: {str(e)}", exc_info=True)
+            return False
+        finally:
+            # Удаляем временный файл
+            if tmp_path and os.path.exists(tmp_path):
+                os.unlink(tmp_path) 

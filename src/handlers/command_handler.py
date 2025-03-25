@@ -564,12 +564,11 @@ async def switch_meeting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # Завершаем текущую сессию и показываем сводку
         await end_session_and_show_summary(update, context)
         
-        # Очищаем данные состояния после завершения сессии
+        # Очищаем временные данные
         state_manager.clear_data(user_id)
-        state_manager.clear_session(user_id)
+        # Не вызываем clear_session, т.к. он уже вызывается в end_session_and_show_summary
     
     # Запускаем процесс создания новой встречи
-    # Используем delayed_message для отправки сообщения после завершения предыдущей сессии
     await update.message.reply_text(
         "🔄 Переключаемся на новую встречу. Выберите папку:",
         reply_markup=ReplyKeyboardRemove()
