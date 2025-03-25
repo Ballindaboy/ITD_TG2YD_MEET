@@ -6,12 +6,35 @@ from src.utils.yadisk_helper import YaDiskHelper
 from src.utils.admin_utils import load_allowed_folders, get_allowed_folders_for_user, is_folder_allowed_for_user, get_user_data
 import os
 from datetime import datetime
+from src.utils.folder_navigation import FolderNavigator
 
 logger = logging.getLogger(__name__)
-yadisk_helper = YaDiskHelper()
+disk_helper = YaDiskHelper()
 
 # Определение стадий диалога
 CHOOSE_FOLDER, NAVIGATE_SUBFOLDERS, CREATE_FOLDER = range(3)
+
+# Обработчик выбора папки через FolderNavigator
+async def folder_selected_callback(update, context, selected_path):
+    user_id = update.effective_user.id
+    logger.info(f"Пользователь {user_id} выбрал папку: {selected_path}")
+    
+    # Вызываем handle_selected_folder без возврата его значения
+    await handle_selected_folder(update, context, selected_path)
+    # Возвращаем True, чтобы указать FolderNavigator, что обработка прошла успешно
+    return True
+
+# Создаем экземпляр навигатора по папкам
+folder_navigator = FolderNavigator(
+    yadisk_helper=disk_helper,
+    title="Выберите папку для встречи:",
+    add_current_folder_button=False,
+    create_folder_button=False,
+    extra_buttons=["❌ Отмена"]
+)
+
+# Устанавливаем callback для навигатора
+folder_navigator.folder_selected_callback = folder_selected_callback
 
 def normalize_path(path):
     """Нормализует путь для Яндекс.Диска"""
@@ -108,14 +131,14 @@ async def handle_category(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             # Получаем список подпапок или создаем сессию сразу
             try:
                 # Проверяем существование директории
-                if not yadisk_helper.disk.exists(selected_folder):
+                if not disk_helper.disk.exists(selected_folder):
                     # Создаем папку, если она не существует
-                    yadisk_helper.disk.mkdir(selected_folder)
+                    disk_helper.disk.mkdir(selected_folder)
                     logger.info(f"Создана папка '{selected_folder}'")
                 
                 # Получаем список подпапок
                 try:
-                    items = list(yadisk_helper.disk.listdir(selected_folder))
+                    items = list(disk_helper.disk.listdir(selected_folder))
                     logger.info(f"Найдено {len(items)} элементов в директории {selected_folder}")
                     
                     # Явно проверяем элементы на тип
@@ -237,7 +260,7 @@ async def navigate_folders(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 
                 # Проверяем, есть ли подпапки в выбранной папке
                 try:
-                    items = list(yadisk_helper.disk.listdir(folder_path))
+                    items = list(disk_helper.disk.listdir(folder_path))
                     logger.debug(f"Найдено {len(items)} элементов в {folder_path}")
                     
                     # Ищем папки среди элементов
@@ -340,7 +363,7 @@ async def create_folder(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     
     try:
         # Проверяем, существует ли уже такая папка
-        if yadisk_helper.disk.exists(new_folder_path):
+        if disk_helper.disk.exists(new_folder_path):
             await update.message.reply_text(
                 f"❌ Папка '{text}' уже существует",
                 reply_markup=ReplyKeyboardRemove()
@@ -348,7 +371,7 @@ async def create_folder(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             return ConversationHandler.END
         
         # Создаем папку
-        yadisk_helper.disk.mkdir(new_folder_path)
+        disk_helper.disk.mkdir(new_folder_path)
         logger.info(f"Создана папка '{new_folder_path}'")
         
         # Создаем сессию в новой папке
@@ -392,7 +415,7 @@ async def start_session(update: Update, context: ContextTypes.DEFAULT_TYPE, root
         session.add_message(start_msg, author=user_full_name)
         
         # Создаем текстовый файл для встречи
-        yadisk_helper.create_text_file(session.txt_file_path, f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {start_msg}")
+        disk_helper.create_text_file(session.txt_file_path, f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {start_msg}")
         
         # Уведомляем о создании встречи
         await update.message.reply_text(
@@ -516,11 +539,11 @@ async def end_session_and_show_summary(update: Update, context: ContextTypes.DEF
     # Обновляем файл на Яндекс.Диске
     try:
         # Загружаем текущее содержимое
-        content = yadisk_helper.get_file_content(session.txt_file_path)
+        content = disk_helper.get_file_content(session.txt_file_path)
         # Добавляем завершающую запись
         content += f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {end_msg}"
         # Обновляем файл
-        yadisk_helper.update_text_file(session.txt_file_path, content)
+        disk_helper.update_text_file(session.txt_file_path, content)
     except Exception as e:
         logger.error(f"Ошибка при обновлении файла встречи: {e}")
     
@@ -618,9 +641,9 @@ async def confirm_reopen_session(update: Update, context: ContextTypes.DEFAULT_T
         
         try:
             # Обновляем файл на Яндекс.Диске
-            content = yadisk_helper.get_file_content(current_session.txt_file_path)
+            content = disk_helper.get_file_content(current_session.txt_file_path)
             content += f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {end_msg}"
-            yadisk_helper.update_text_file(current_session.txt_file_path, content)
+            disk_helper.update_text_file(current_session.txt_file_path, content)
         except Exception as e:
             logger.error(f"Ошибка при обновлении файла текущей сессии: {e}")
         
@@ -677,9 +700,9 @@ async def reopen_saved_session(update: Update, context: ContextTypes.DEFAULT_TYP
         
         # Обновляем файл на Яндекс.Диске
         try:
-            content = yadisk_helper.get_file_content(txt_file_path)
+            content = disk_helper.get_file_content(txt_file_path)
             content += f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {reopen_msg}"
-            yadisk_helper.update_text_file(txt_file_path, content)
+            disk_helper.update_text_file(txt_file_path, content)
         except Exception as e:
             logger.error(f"Ошибка при обновлении файла возобновленной сессии: {e}")
         
@@ -700,52 +723,18 @@ async def reopen_saved_session(update: Update, context: ContextTypes.DEFAULT_TYP
         )
 
 async def switch_meeting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Обработчик команды /switch - переключение на другую встречу"""
+    """
+    Переключает между встречами
+    """
     user_id = update.effective_user.id
-    logger.info(f"Пользователь {user_id} хочет переключиться на другую встречу")
+    user_session = state_manager.get_session(user_id)
     
-    # Проверяем, есть ли активная сессия
-    session = state_manager.get_session(user_id)
-    if session:
-        # Завершаем текущую сессию и показываем сводку
+    # Если есть активная сессия, завершаем ее перед переключением
+    if user_session:
         await end_session_and_show_summary(update, context)
-        
-        # НЕ очищаем временные данные, так как они нужны для добавления комментария
-        # state_manager.clear_data(user_id)
     
-    # Запускаем процесс создания новой встречи
-    await update.message.reply_text(
-        "🔄 Переключаемся на новую встречу. Выберите папку:",
-        reply_markup=ReplyKeyboardRemove()
-    )
-    
-    # Получаем список разрешенных папок для этого пользователя
-    allowed_folders = get_allowed_folders_for_user(user_id)
-    
-    if not allowed_folders:
-        await update.message.reply_text(
-            "❌ У вас нет доступа ни к одной папке. Обратитесь к администратору.",
-            reply_markup=ReplyKeyboardRemove()
-        )
-        return ConversationHandler.END
-    
-    # Создаем клавиатуру для выбора папки
-    keyboard = []
-    for i, folder in enumerate(allowed_folders, 1):
-        keyboard.append([f"{i}. {folder}"])
-    
-    keyboard.append(["❌ Отмена"])
-    
-    await update.message.reply_text(
-        "👋 Выберите папку для встречи:",
-        reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
-    )
-    
-    # Сохраняем список разрешенных папок в состоянии пользователя
-    state_manager.set_data(user_id, "allowed_folders", allowed_folders)
-    
-    # Возвращаем состояние для ConversationHandler
-    return CHOOSE_FOLDER
+    # Запрашиваем выбор папки
+    return await choose_folder(update, context)
 
 async def current_meeting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработчик команды /current - показывает информацию о текущей встрече"""
@@ -792,4 +781,129 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         reply_markup=ReplyKeyboardRemove()
     )
     
-    return ConversationHandler.END 
+    return ConversationHandler.END
+
+async def choose_folder(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Отображает список доступных папок для пользователя и запрашивает выбор
+    """
+    user_id = update.effective_user.id
+    
+    # Получаем список разрешенных папок для этого пользователя
+    allowed_folders = get_allowed_folders_for_user(user_id)
+    
+    if not allowed_folders:
+        await update.message.reply_text(
+            "❌ У вас нет доступа ни к одной папке. Обратитесь к администратору.",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        return ConversationHandler.END
+    
+    # Обрабатываем тип вызова (callback_query или обычное сообщение)
+    if update.callback_query:
+        await update.callback_query.edit_message_text(
+            text="👋 Выберите папку для встречи:",
+            reply_markup=None
+        )
+        
+        # Создаем сообщение и вызываем show_folders с пользовательскими папками
+        message = await update.effective_chat.send_message(
+            text="Загрузка папок...",
+            reply_markup=None
+        )
+        # Обновляем message в update для корректной работы folder_navigator
+        update.message = message
+    
+    # Запускаем навигацию по виртуальным папкам, которые соответствуют разрешенным для пользователя папкам
+    # Создаем виртуальные элементы для навигатора, имитирующие структуру папок
+    class VirtualFolder:
+        def __init__(self, path, name):
+            self.path = path
+            self.name = name
+            self.type = "dir"
+    
+    virtual_folders = [VirtualFolder(folder, folder.split('/')[-1]) for folder in allowed_folders]
+    
+    # Сохраняем виртуальные папки в контексте пользователя
+    context.user_data["folders"] = virtual_folders
+    context.user_data["current_path"] = "/"
+    
+    # Формируем сообщение со списком папок
+    message = folder_navigator.format_folders_message("/", virtual_folders)
+    
+    # Формируем клавиатуру
+    keyboard = folder_navigator.build_keyboard(virtual_folders, include_current_folder=False)
+    
+    # Отправляем сообщение с папками
+    await update.message.reply_text(
+        message,
+        reply_markup=ReplyKeyboardMarkup(
+            keyboard,
+            one_time_keyboard=True,
+            resize_keyboard=True
+        )
+    )
+    
+    # Сохраняем allowed_folders для использования в обработчике
+    state_manager.set_user_data(user_id, "allowed_folders", allowed_folders)
+    
+    return CHOOSE_FOLDER 
+
+async def handle_selected_folder(update: Update, context: ContextTypes.DEFAULT_TYPE, folder_path: str) -> int:
+    """
+    Обрабатывает выбранную папку и создает сессию
+    """
+    user_id = update.effective_user.id
+    
+    # Получаем имя пользователя
+    user_name = update.effective_user.first_name
+    if update.effective_user.last_name:
+        user_name += f" {update.effective_user.last_name}"
+    state_manager.set_user_data(user_id, "user_name", user_name)
+    
+    # Извлекаем имя папки из пути
+    folder_name = folder_path.split('/')[-1]
+    
+    # Получаем корневую папку (в данном случае это родительская папка)
+    root_folder = "/".join(folder_path.split('/')[:-1])
+    state_manager.set_user_data(user_id, "root_folder", root_folder)
+    
+    # Создаем новую сессию
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    session_file = f"{folder_path}/meeting_{timestamp}.txt"
+    
+    state_manager.create_session(user_id, {
+        "folder_path": folder_path,
+        "folder_name": folder_name,
+        "session_file": session_file,
+        "root_folder": root_folder,
+        "state": SessionState.ACTIVE
+    })
+    
+    logging.debug(f"Создана новая сессия для пользователя {user_id} в папке {folder_path}")
+    
+    try:
+        # Создаем файл на Яндекс.Диске с начальной записью
+        disk_helper = YaDiskHelper()
+        timestamp_log = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        initial_content = f"[{timestamp_log}] Система [СИСТЕМА]: Начало встречи в папке: {folder_path}\n"
+        disk_helper.create_text_file(session_file, initial_content)
+        
+        await update.message.reply_text(
+            text=f"✅ Начата новая сессия в папке: {folder_name}\n\n"
+                 f"📝 Отправляйте текстовые сообщения и голосовые заметки, они будут добавлены в файл встречи.\n"
+                 f"📊 По окончании нажмите /end для завершения и получения отчёта.",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        
+        logging.debug(f"Пользователь {user_id} начал сессию в папке {folder_path}")
+        
+        return SessionState.ACTIVE
+    except Exception as e:
+        logging.error(f"Ошибка при создании сессии: {e}")
+        await update.message.reply_text(
+            text=f"❌ Произошла ошибка при создании сессии: {e}",
+            reply_markup=None
+        )
+        state_manager.clear_session(user_id)
+        return ConversationHandler.END 
