@@ -524,6 +524,10 @@ async def end_session_and_show_summary(update: Update, context: ContextTypes.DEF
     except Exception as e:
         logger.error(f"Ошибка при обновлении файла встречи: {e}")
     
+    # Сохраняем информацию о завершенной сессии для возможности добавления комментария
+    state_manager.set_data(user_id, "last_session_txt_file", session.txt_file_path)
+    state_manager.set_data(user_id, "last_session_summary", summary)
+    
     # Создаем клавиатуру для добавления комментария
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("✏️ Добавить комментарий", callback_data="add_final_comment")]
@@ -552,6 +556,93 @@ async def end_session_and_show_summary(update: Update, context: ContextTypes.DEF
         logger.info(f"Отменены запланированные проверки активности для пользователя {user_id}")
     else:
         logger.warning(f"job_queue недоступен для отмены проверок активности для пользователя {user_id}")
+
+async def handle_final_comment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Обрабатывает нажатие на кнопку "Добавить комментарий"
+    после завершения сессии
+    """
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    
+    # Получаем данные пользователя
+    user_data = get_user_data(user_id)
+    user_name = ""
+    if user_data:
+        first_name = user_data.get('first_name', '')
+        last_name = user_data.get('last_name', '')
+        user_name = f"{first_name} {last_name}".strip()
+    
+    # Получаем путь к файлу последней завершенной сессии
+    txt_file_path = state_manager.get_data(user_id, "last_session_txt_file")
+    
+    if not txt_file_path:
+        await query.edit_message_text(
+            text="❌ Не удалось найти информацию о завершенной сессии."
+        )
+        return
+    
+    # Устанавливаем состояние ожидания комментария
+    state_manager.set_data(user_id, "awaiting_final_comment", True)
+    state_manager.set_data(user_id, "final_comment_author", user_name)
+    
+    # Сообщаем пользователю, что ожидаем комментарий
+    await query.edit_message_text(
+        text="✏️ Пожалуйста, введите ваш итоговый комментарий к встрече:"
+    )
+
+async def process_final_comment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Обрабатывает итоговый комментарий к завершенной встрече
+    """
+    user_id = update.effective_user.id
+    comment_text = update.message.text
+    
+    # Проверяем, что пользователь находится в состоянии ожидания комментария
+    if not state_manager.get_data(user_id, "awaiting_final_comment"):
+        # Если нет, обрабатываем сообщение стандартным способом
+        return False
+    
+    # Получаем информацию о завершенной сессии
+    txt_file_path = state_manager.get_data(user_id, "last_session_txt_file")
+    author = state_manager.get_data(user_id, "final_comment_author") or ""
+    
+    if not txt_file_path:
+        await update.message.reply_text(
+            "❌ Не удалось найти информацию о завершенной сессии."
+        )
+        state_manager.set_data(user_id, "awaiting_final_comment", False)
+        return True
+    
+    try:
+        # Добавляем итоговый комментарий в файл встречи
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        author_prefix = f"[{author}] " if author else ""
+        comment_line = f"[{timestamp}] {author_prefix}Итоговый комментарий: {comment_text}"
+        
+        yadisk_helper.append_to_text_file(txt_file_path, comment_line)
+        
+        # Уведомляем пользователя об успешном добавлении комментария
+        await update.message.reply_text(
+            "✅ Ваш итоговый комментарий успешно добавлен к отчету о встрече."
+        )
+        
+        # Сбрасываем состояние ожидания комментария
+        state_manager.set_data(user_id, "awaiting_final_comment", False)
+        
+        return True
+    except Exception as e:
+        logger.error(f"Ошибка при добавлении итогового комментария: {str(e)}", exc_info=True)
+        await update.message.reply_text(
+            f"❌ Произошла ошибка при добавлении комментария: {str(e)}"
+        )
+        
+        # Сбрасываем состояние ожидания комментария
+        state_manager.set_data(user_id, "awaiting_final_comment", False)
+        
+        return True
 
 async def switch_meeting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обработчик команды /switch - переключение на другую встречу"""

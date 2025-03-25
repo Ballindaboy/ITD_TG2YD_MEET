@@ -25,7 +25,7 @@ from config.logging_config import configure_logging
 from src.handlers.command_handler import (
     start, help_command, new_meeting, handle_category, navigate_folders,
     switch_meeting, current_meeting, cancel, create_folder,
-    handle_session_callback, end_session_and_show_summary,
+    handle_session_callback, end_session_and_show_summary, handle_final_comment,
     CHOOSE_FOLDER, NAVIGATE_SUBFOLDERS, CREATE_FOLDER
 )
 from src.handlers.file_handler import handle_message, handle_text, handle_file
@@ -200,6 +200,9 @@ def main() -> None:
         
         # Обработчик callback-запросов (нажатий на кнопки)
         application.add_handler(CallbackQueryHandler(handle_session_callback, pattern=r'^session_'))
+        
+        # Обработчик кнопки "Добавить комментарий"
+        application.add_handler(CallbackQueryHandler(handle_final_comment, pattern=r'^add_final_comment$'))
         
         # Добавляем обработчики текстовых сообщений
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
