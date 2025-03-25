@@ -25,12 +25,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     user_id = update.effective_user.id
     
     try:
-        # Проверяем, активен ли режим ожидания итогового комментария
-        from src.handlers.command_handler import process_final_comment
-        processed = await process_final_comment(update, context)
-        if processed:
-            return
-            
         # Проверяем, активен ли режим ожидания расшифровки голосового сообщения
         awaiting_transcription = state_manager.get_data(user_id, "awaiting_transcription")
         if awaiting_transcription:

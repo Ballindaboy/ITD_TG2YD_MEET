@@ -25,7 +25,8 @@ from config.logging_config import configure_logging
 from src.handlers.command_handler import (
     start, help_command, new_meeting, handle_category, navigate_folders,
     switch_meeting, current_meeting, cancel, create_folder,
-    handle_session_callback, end_session_and_show_summary, handle_final_comment,
+    handle_session_callback, end_session_and_show_summary, reopen_session, 
+    confirm_reopen_session, cancel_reopen_session,
     CHOOSE_FOLDER, NAVIGATE_SUBFOLDERS, CREATE_FOLDER
 )
 from src.handlers.file_handler import handle_message, handle_text, handle_file
@@ -198,8 +199,10 @@ def main() -> None:
         # Обработчик для завершения встречи
         application.add_handler(CommandHandler("end", end_session_and_show_summary))
         
-        # Обработчик кнопки "Добавить комментарий" - регистрируем перед общим обработчиком callback-запросов
-        application.add_handler(CallbackQueryHandler(handle_final_comment, pattern=r'add_final_comment'))
+        # Обработчик кнопки "Вернуться в сессию" - регистрируем перед общим обработчиком callback-запросов
+        application.add_handler(CallbackQueryHandler(reopen_session, pattern=r'reopen_session'))
+        application.add_handler(CallbackQueryHandler(confirm_reopen_session, pattern=r'confirm_reopen'))
+        application.add_handler(CallbackQueryHandler(cancel_reopen_session, pattern=r'cancel_reopen'))
         
         # Обработчик callback-запросов (нажатий на кнопки)
         application.add_handler(CallbackQueryHandler(handle_session_callback, pattern=r'^session_'))

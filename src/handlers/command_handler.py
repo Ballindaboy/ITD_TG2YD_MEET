@@ -524,22 +524,25 @@ async def end_session_and_show_summary(update: Update, context: ContextTypes.DEF
     except Exception as e:
         logger.error(f"Ошибка при обновлении файла встречи: {e}")
     
-    # Сохраняем информацию о завершенной сессии для возможности добавления комментария
+    # Сохраняем информацию о завершенной сессии для возможности возврата
     state_manager.set_data(user_id, "last_session_txt_file", session.txt_file_path)
+    state_manager.set_data(user_id, "last_session_folder", session.folder_path)
+    state_manager.set_data(user_id, "last_session_folder_name", session.folder_name)
+    state_manager.set_data(user_id, "last_session_root_folder", session.root_folder)
     state_manager.set_data(user_id, "last_session_summary", summary)
     
     # Логируем сохраненные данные
     logger.info(f"Сохранены данные о завершенной сессии для пользователя {user_id}. Путь к файлу: {session.txt_file_path}")
     
-    # Создаем клавиатуру для добавления комментария
+    # Создаем клавиатуру для возврата в сессию
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✏️ Добавить комментарий", callback_data="add_final_comment")]
+        [InlineKeyboardButton("🔄 Вернуться в сессию", callback_data="reopen_session")]
     ])
     
     # Логируем создание кнопки
-    logger.info(f"Создана кнопка для добавления комментария с callback_data='add_final_comment'")
+    logger.info(f"Создана кнопка для возврата в сессию с callback_data='reopen_session'")
     
-    # Показываем сводку и предлагаем добавить комментарий
+    # Показываем сводку и предлагаем вернуться в сессию
     if update.callback_query:
         await update.callback_query.edit_message_text(
             text=f"✅ Встреча завершена\n\n{summary[:3900]}...",  # Ограничиваем размер сообщения
@@ -563,10 +566,10 @@ async def end_session_and_show_summary(update: Update, context: ContextTypes.DEF
     else:
         logger.warning(f"job_queue недоступен для отмены проверок активности для пользователя {user_id}")
 
-async def handle_final_comment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def reopen_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    Обрабатывает нажатие на кнопку "Добавить комментарий"
-    после завершения сессии
+    Обрабатывает нажатие на кнопку "Вернуться в сессию"
+    после завершения сессии, восстанавливая предыдущую сессию
     """
     query = update.callback_query
     await query.answer()
@@ -574,89 +577,127 @@ async def handle_final_comment(update: Update, context: ContextTypes.DEFAULT_TYP
     user_id = update.effective_user.id
     
     # Логируем полученные данные для отладки
-    logger.info(f"Обработка callback для кнопки 'Добавить комментарий'. User ID: {user_id}, callback_data: {query.data}")
+    logger.info(f"Обработка callback для кнопки 'Вернуться в сессию'. User ID: {user_id}, callback_data: {query.data}")
     
-    # Получаем данные пользователя
-    user_data = get_user_data(user_id)
-    user_name = ""
-    if user_data:
-        first_name = user_data.get('first_name', '')
-        last_name = user_data.get('last_name', '')
-        user_name = f"{first_name} {last_name}".strip()
+    # Получаем данные о текущей активной сессии пользователя (если есть)
+    current_session = state_manager.get_session(user_id)
     
-    # Логируем сохраненные данные
-    saved_data = state_manager.get_data(user_id, "last_session_txt_file")
-    logger.info(f"Сохраненный путь к файлу сессии: {saved_data}")
-    
-    # Получаем путь к файлу последней завершенной сессии
-    txt_file_path = state_manager.get_data(user_id, "last_session_txt_file")
-    
-    if not txt_file_path:
-        logger.error(f"Не найден путь к файлу последней сессии для пользователя {user_id}")
+    # Если у пользователя есть активная сессия, спрашиваем подтверждение о закрытии
+    if current_session:
+        # Создаем клавиатуру для подтверждения
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Да, закрыть текущую и открыть предыдущую", callback_data="confirm_reopen")],
+            [InlineKeyboardButton("❌ Нет, остаться в текущей", callback_data="cancel_reopen")]
+        ])
+        
         await query.edit_message_text(
-            text="❌ Не удалось найти информацию о завершенной сессии."
+            text="⚠️ У вас уже есть активная сессия. Вы уверены, что хотите закрыть её и вернуться к предыдущей?",
+            reply_markup=keyboard
         )
         return
     
-    # Устанавливаем состояние ожидания комментария
-    state_manager.set_data(user_id, "awaiting_final_comment", True)
-    state_manager.set_data(user_id, "final_comment_author", user_name)
+    # Если нет активной сессии, восстанавливаем сохраненную
+    await reopen_saved_session(update, context)
+
+async def confirm_reopen_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Обрабатывает подтверждение закрытия текущей сессии и открытия предыдущей
+    """
+    query = update.callback_query
+    await query.answer()
     
-    # Сообщаем пользователю, что ожидаем комментарий
+    user_id = update.effective_user.id
+    logger.info(f"Пользователь {user_id} подтвердил закрытие текущей сессии и возврат к предыдущей")
+    
+    # Закрываем текущую сессию
+    current_session = state_manager.get_session(user_id)
+    if current_session:
+        # Добавляем запись о принудительном закрытии сессии
+        end_msg = f"Сессия была закрыта для возврата к предыдущей сессии"
+        current_session.add_message(end_msg)
+        
+        try:
+            # Обновляем файл на Яндекс.Диске
+            content = yadisk_helper.get_file_content(current_session.txt_file_path)
+            content += f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {end_msg}"
+            yadisk_helper.update_text_file(current_session.txt_file_path, content)
+        except Exception as e:
+            logger.error(f"Ошибка при обновлении файла текущей сессии: {e}")
+        
+        # Очищаем текущую сессию
+        state_manager.clear_session(user_id)
+    
+    # Восстанавливаем предыдущую сессию
+    await reopen_saved_session(update, context)
+
+async def cancel_reopen_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Обрабатывает отмену возврата к предыдущей сессии
+    """
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    logger.info(f"Пользователь {user_id} отменил возврат к предыдущей сессии")
+    
     await query.edit_message_text(
-        text="✏️ Пожалуйста, введите ваш итоговый комментарий к встрече:"
+        text="✅ Вы остались в текущей сессии. Продолжайте работу как обычно."
     )
 
-async def process_final_comment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def reopen_saved_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    Обрабатывает итоговый комментарий к завершенной встрече
+    Вспомогательная функция для восстановления сохраненной сессии
     """
+    query = update.callback_query
     user_id = update.effective_user.id
-    comment_text = update.message.text
     
-    # Проверяем, что пользователь находится в состоянии ожидания комментария
-    if not state_manager.get_data(user_id, "awaiting_final_comment"):
-        # Если нет, обрабатываем сообщение стандартным способом
-        return False
-    
-    # Получаем информацию о завершенной сессии
+    # Получаем данные о сохраненной сессии
     txt_file_path = state_manager.get_data(user_id, "last_session_txt_file")
-    author = state_manager.get_data(user_id, "final_comment_author") or ""
+    folder_path = state_manager.get_data(user_id, "last_session_folder")
+    folder_name = state_manager.get_data(user_id, "last_session_folder_name")
+    root_folder = state_manager.get_data(user_id, "last_session_root_folder")
     
-    if not txt_file_path:
-        await update.message.reply_text(
-            "❌ Не удалось найти информацию о завершенной сессии."
+    if not all([txt_file_path, folder_path, folder_name, root_folder]):
+        logger.error(f"Не найдены все необходимые данные для восстановления сессии: {txt_file_path}, {folder_path}, {folder_name}, {root_folder}")
+        await query.edit_message_text(
+            text="❌ Не удалось восстановить сессию. Отсутствуют необходимые данные."
         )
-        state_manager.set_data(user_id, "awaiting_final_comment", False)
-        return True
+        return
     
     try:
-        # Добавляем итоговый комментарий в файл встречи
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        author_prefix = f"[{author}] " if author else ""
-        comment_line = f"[{timestamp}] {author_prefix}Итоговый комментарий: {comment_text}"
+        # Создаем новую сессию на основе сохраненных данных
+        session = SessionState(root_folder, folder_path, folder_name, user_id)
         
-        yadisk_helper.append_to_text_file(txt_file_path, comment_line)
+        # Устанавливаем правильный путь к файлу (используем существующий, а не создаем новый)
+        session.txt_file_path = txt_file_path
         
-        # Уведомляем пользователя об успешном добавлении комментария
-        await update.message.reply_text(
-            "✅ Ваш итоговый комментарий успешно добавлен к отчету о встрече."
+        # Добавляем запись о возобновлении сессии
+        reopen_msg = f"Сессия была возобновлена в папке: {folder_path}"
+        session.add_message(reopen_msg)
+        
+        # Обновляем файл на Яндекс.Диске
+        try:
+            content = yadisk_helper.get_file_content(txt_file_path)
+            content += f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {reopen_msg}"
+            yadisk_helper.update_text_file(txt_file_path, content)
+        except Exception as e:
+            logger.error(f"Ошибка при обновлении файла возобновленной сессии: {e}")
+        
+        # Сохраняем сессию в менеджере состояний
+        state_manager.set_session(user_id, session)
+        
+        # Уведомляем пользователя об успешном восстановлении сессии
+        await query.edit_message_text(
+            text=f"✅ Сессия в папке {folder_path} успешно восстановлена.\n\nМожете продолжать работу как обычно."
         )
         
-        # Сбрасываем состояние ожидания комментария
-        state_manager.set_data(user_id, "awaiting_final_comment", False)
+        logger.info(f"Сессия успешно восстановлена для пользователя {user_id}. Папка: {folder_path}")
         
-        return True
     except Exception as e:
-        logger.error(f"Ошибка при добавлении итогового комментария: {str(e)}", exc_info=True)
-        await update.message.reply_text(
-            f"❌ Произошла ошибка при добавлении комментария: {str(e)}"
+        logger.error(f"Ошибка при восстановлении сессии: {str(e)}", exc_info=True)
+        await query.edit_message_text(
+            text=f"❌ Произошла ошибка при восстановлении сессии: {str(e)}"
         )
-        
-        # Сбрасываем состояние ожидания комментария
-        state_manager.set_data(user_id, "awaiting_final_comment", False)
-        
-        return True
 
 async def switch_meeting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обработчик команды /switch - переключение на другую встречу"""
