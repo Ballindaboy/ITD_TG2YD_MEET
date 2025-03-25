@@ -27,7 +27,7 @@ from src.handlers.command_handler import (
     switch_meeting, current_meeting, cancel, create_folder,
     handle_session_callback, end_session_and_show_summary, reopen_session, 
     confirm_reopen_session, cancel_reopen_session,
-    CHOOSE_FOLDER, NAVIGATE_SUBFOLDERS, CREATE_FOLDER
+    CHOOSE_FOLDER, NAVIGATE_SUBFOLDERS, CREATE_FOLDER, folder_selected_callback
 )
 from src.handlers.file_handler import handle_message, handle_text, handle_file
 from src.handlers.media_handlers.voice_handler import process_transcription, process_transcription_edit
@@ -48,6 +48,7 @@ from src.handlers.admin_handler import (
 from src.utils.session_utils import SESSION_TIMEOUT
 from src.utils.error_utils import handle_error
 from src.utils.yadisk_helper import YaDiskHelper
+from src.utils.folder_navigation import FolderNavigator
 
 # Настройка логирования
 configure_logging()
@@ -58,6 +59,9 @@ LOCK_FILE = os.path.join(DATA_DIR, 'bot.lock')
 
 # Глобальный объект YaDiskHelper
 yadisk_helper = None
+
+# Глобальный объект FolderNavigator
+folder_navigator = None
 
 def cleanup():
     """Очистка ресурсов при выходе"""
@@ -136,6 +140,13 @@ def main() -> None:
     global yadisk_helper
     yadisk_helper = YaDiskHelper(skip_connection_check=True)
     
+    # Инициализируем глобальный объект FolderNavigator
+    global folder_navigator
+    folder_navigator = FolderNavigator(
+        yadisk_helper=yadisk_helper,
+        folder_selected_callback=folder_selected_callback
+    )
+    
     # Если указан флаг офлайн-режима, принудительно переключаем
     if args.offline:
         logger.warning("Запуск в принудительном ОФЛАЙН-режиме. Яндекс.Диск не будет использоваться.")
@@ -169,46 +180,44 @@ def main() -> None:
         # Регистрация глобального обработчика ошибок
         application.add_error_handler(global_error_handler)
         
-        # Команды для всех пользователей
+        # Регистрация обработчиков команд
         application.add_handler(CommandHandler("start", start))
         application.add_handler(CommandHandler("help", help_command))
-        application.add_handler(CommandHandler("cancel", cancel))
+        application.add_handler(CommandHandler("end", end_session_and_show_summary))
+        application.add_handler(CommandHandler("current", current_meeting))
         
-        # Добавляем обработчик для создания новой встречи
-        new_meeting_handler = ConversationHandler(
-            entry_points=[
-                CommandHandler("new", new_meeting), 
-                CommandHandler("meet", new_meeting),
-                CommandHandler("switch", switch_meeting),
-                CommandHandler("meetings", switch_meeting)
-            ],
+        # Регистрация конверсации для навигации по папкам
+        conv_handler = ConversationHandler(
+            entry_points=[CommandHandler("new", new_meeting)],
             states={
                 CHOOSE_FOLDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_category)],
                 NAVIGATE_SUBFOLDERS: [MessageHandler(filters.TEXT & ~filters.COMMAND, navigate_folders)],
                 CREATE_FOLDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, create_folder)]
             },
-            fallbacks=[CommandHandler("cancel", cancel)],
-            name="new_meeting_conversation",
-            persistent=False
+            fallbacks=[CommandHandler("cancel", cancel)]
         )
-        application.add_handler(new_meeting_handler)
         
-        # Добавляем обработчик для просмотра текущей встречи
-        application.add_handler(CommandHandler("current", current_meeting))
+        # Отдельный обработчик для команды /switch для переключения между папками
+        application.add_handler(CommandHandler("switch", switch_meeting))
         
-        # Обработчик для завершения встречи
-        application.add_handler(CommandHandler("end", end_session_and_show_summary))
+        # Регистрируем обработчик для выбора папки через FolderNavigator
+        application.add_handler(
+            MessageHandler(
+                filters.TEXT & ~filters.COMMAND, 
+                lambda update, context: folder_navigator.handle_folder_selection(update, context)
+            )
+        )
         
-        # Обработчик кнопки "Вернуться в сессию" - регистрируем перед общим обработчиком callback-запросов
-        application.add_handler(CallbackQueryHandler(reopen_session, pattern=r'reopen_session'))
-        application.add_handler(CallbackQueryHandler(confirm_reopen_session, pattern=r'confirm_reopen'))
-        application.add_handler(CallbackQueryHandler(cancel_reopen_session, pattern=r'cancel_reopen'))
+        # Регистрация обработчиков для кнопок "Вернуться в сессию"
+        application.add_handler(CallbackQueryHandler(reopen_session, pattern="reopen_session"))
+        application.add_handler(CallbackQueryHandler(confirm_reopen_session, pattern="confirm_reopen"))
+        application.add_handler(CallbackQueryHandler(cancel_reopen_session, pattern="cancel_reopen"))
         
-        # Обработчик callback-запросов (нажатий на кнопки)
-        application.add_handler(CallbackQueryHandler(handle_session_callback, pattern=r'^session_'))
-        
-        # Добавляем обработчики текстовых сообщений
+        # Добавляем обработчик для текстовых сообщений, которые попадают в файл встречи
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+        
+        # Добавляем обработчик для голосовых сообщений
+        application.add_handler(MessageHandler(filters.VOICE, handle_voice))
         
         # Обработчики исправленной транскрипции голосовых сообщений
         application.add_handler(MessageHandler(
@@ -225,7 +234,6 @@ def main() -> None:
         
         # Обработчики медиафайлов
         application.add_handler(MessageHandler(filters.PHOTO, lambda update, context: handle_file(update, context, handle_photo)))
-        application.add_handler(MessageHandler(filters.VOICE, lambda update, context: handle_file(update, context, handle_voice)))
         application.add_handler(MessageHandler(filters.AUDIO, lambda update, context: handle_file(update, context, handle_voice)))
         application.add_handler(MessageHandler(filters.VIDEO, lambda update, context: handle_file(update, context, handle_video)))
         application.add_handler(MessageHandler(filters.Document.ALL, lambda update, context: handle_file(update, context, handle_document)))
