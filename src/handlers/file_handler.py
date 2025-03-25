@@ -21,64 +21,36 @@ logger = logging.getLogger(__name__)
 yadisk_helper = YaDiskHelper()
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обрабатывает текстовые сообщения"""
+    """
+    Обрабатывает текстовые сообщения и добавляет их в файл сессии
+    """
     user_id = update.effective_user.id
+    user_session = state_manager.get_session(user_id)
+    text = update.message.text
+    
+    if not user_session:
+        logging.warning(f"Пользователь {user_id} отправил текст без активной сессии")
+        await update.message.reply_text("❌ У вас нет активной сессии. Начните новую с помощью /start")
+        return
     
     try:
-        # Проверяем, активен ли режим ожидания расшифровки голосового сообщения
-        awaiting_transcription = state_manager.get_data(user_id, "awaiting_transcription")
-        if awaiting_transcription:
-            from src.handlers.media_handlers.voice_handler import process_transcription
-            await process_transcription(update, context)
-            return
-            
-        # Проверяем, активен ли режим ожидания редактирования расшифровки
-        awaiting_edit = state_manager.get_data(user_id, "awaiting_transcription_edit")
-        if awaiting_edit:
-            from src.handlers.media_handlers.voice_handler import process_transcription_edit
-            await process_transcription_edit(update, context)
-            return
-
-        # Получаем текущую сессию
-        session = state_manager.get_session(user_id)
-        if not session:
-            logger.warning(f"Пользователь {user_id} отправил текст, но нет активной сессии")
-            await update.message.reply_text(
-                "❌ У вас нет активной встречи. Используйте /new, чтобы начать встречу."
-            )
-            return
-
-        # Получаем данные пользователя для добавления автора
-        user_data = get_user_data(user_id)
-        user_name = ""
-        if user_data:
-            first_name = user_data.get('first_name', '')
-            last_name = user_data.get('last_name', '')
-            user_name = f"{first_name} {last_name}".strip()
-
-        # Добавляем сообщение в текстовый файл
-        text = update.message.text
+        # Получаем имя пользователя
+        user_name = state_manager.get_user_data(user_id, "user_name", "Пользователь")
         
-        # Добавляем запись в историю сессии
-        session.add_message(text, author=user_name)
+        # Форматируем сообщение в виде лога
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        formatted_message = f"[{timestamp}] {user_name} [ТЕКСТ]: {text}\n"
         
-        # Форматируем текст для добавления в файл
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        author_prefix = f"[{user_name}] " if user_name else ""
-        formatted_text = f"[{timestamp}] {author_prefix}{text}"
-        
-        # Добавляем сообщение в файл на Яндекс.Диске
-        yadisk_helper.append_to_text_file(session.txt_file_path, formatted_text)
+        # Сохраняем в файл
+        disk_helper = YaDiskHelper()
+        disk_helper.append_to_file(user_session["session_file"], formatted_message)
         
         # Отправляем подтверждение
-        await update.message.reply_text(
-            "✅ Текст добавлен в отчет"
-        )
+        await update.message.reply_text("✅ Сообщение добавлено в файл встречи")
+        
     except Exception as e:
-        logger.error(f"Ошибка при обработке текста: {str(e)}", exc_info=True)
-        await update.message.reply_text(
-            f"❌ Произошла ошибка: {str(e)}"
-        )
+        logging.error(f"Ошибка при сохранении текстового сообщения: {e}")
+        await update.message.reply_text(f"❌ Произошла ошибка при сохранении сообщения: {e}")
 
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE, handler_func=None) -> None:
     """Обработчик получения файлов любого типа"""

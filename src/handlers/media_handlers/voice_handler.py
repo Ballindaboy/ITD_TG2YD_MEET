@@ -8,76 +8,61 @@ from src.utils.yadisk_helper import YaDiskHelper
 from src.utils.state_manager import state_manager
 from src.handlers.media_handlers.common import download_telegram_file
 from src.utils.speech_recognition import transcribe_audio
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 yadisk_helper = YaDiskHelper()
 
-async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE, file_id, file_name, session) -> None:
-    """Обработчик голосовых сообщений
-    
-    В этой версии аудио не сохраняется на Яндекс.Диск, а только расшифровывается и добавляется в текстовый файл.
-    Это уменьшает расход трафика и места на диске, при этом сохраняя полезную информацию.
+async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Обрабатывает голосовое сообщение
     """
     user_id = update.effective_user.id
+    user_session = state_manager.get_session(user_id)
     
-    # Сообщаем о начале обработки
-    status_message = await update.message.reply_text("🔉 Обрабатываю голосовое сообщение...")
+    if not user_session:
+        logging.warning(f"Пользователь {user_id} отправил голосовое сообщение без активной сессии")
+        await update.message.reply_text("❌ У вас нет активной сессии. Начните новую с помощью /start")
+        return
     
     try:
-        # Создаем временный файл
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.ogg') as tmp_file:
-            tmp_path = tmp_file.name
+        # Получаем информацию о голосовом сообщении
+        voice = update.message.voice
+        file_id = voice.file_id
         
-        # Скачиваем файл
-        await download_telegram_file(context, file_id, tmp_path)
+        # Скачиваем голосовое сообщение
+        voice_file = await context.bot.get_file(file_id)
         
-        # Определяем размер файла для информации
-        file_size = os.path.getsize(tmp_path)
-        file_size_mb = round(file_size / (1024 * 1024), 2)
+        # Создаем временный файл для голосового сообщения
+        with tempfile.NamedTemporaryFile(suffix='.ogg', delete=False) as temp_voice:
+            await voice_file.download_to_drive(temp_voice.name)
+            temp_voice_path = temp_voice.name
         
-        # Уведомляем о процессе распознавания
-        await status_message.edit_text(f"🔉 Получено голосовое сообщение ({file_size_mb} МБ). Распознаю речь...")
+        # Уведомляем пользователя о начале обработки
+        processing_message = await update.message.reply_text("🔄 Обрабатываю голосовое сообщение...")
         
-        # Производим транскрипцию аудио
-        transcription = transcribe_audio(tmp_path)
+        # Транскрибируем голосовое сообщение
+        transcription = transcribe_audio(temp_voice_path)
+        
+        # Получаем имя пользователя
+        user_name = state_manager.get_user_data(user_id, "user_name", "Пользователь")
+        
+        # Сохраняем транскрипцию в файл сессии
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        voice_message = f"[{timestamp}] {user_name} [АУДИО]: {transcription}\n"
+        
+        disk_helper = YaDiskHelper()
+        disk_helper.append_to_file(user_session["session_file"], voice_message)
         
         # Удаляем временный файл
-        os.unlink(tmp_path)
+        os.unlink(temp_voice_path)
         
-        if transcription:
-            # Добавляем расшифровку в файл встречи
-            yadisk_helper.append_to_text_file(
-                session.txt_file_path, 
-                f"Расшифровка голосового сообщения: {transcription}"
-            )
-            
-            # Показываем результат пользователю и предлагаем отредактировать при необходимости
-            await status_message.edit_text(
-                f"✅ Голосовое сообщение успешно расшифровано\n\n"
-                f"📝 Автоматическая расшифровка:\n{transcription}\n\n"
-                "Если расшифровка неточная, пришлите исправленный текст, и я обновлю отчёт:"
-            )
-            
-            # Устанавливаем состояние ожидания возможного редактирования расшифровки
-            state_manager.set_data(user_id, "awaiting_transcription_edit", True)
-        else:
-            # Если автоматическая расшифровка не удалась, просим пользователя ввести текст вручную
-            await status_message.edit_text(
-                "⚠️ Не удалось автоматически распознать текст.\n"
-                "Напишите расшифровку текста голосового сообщения, и я добавлю её в отчёт:"
-            )
-            
-            # Устанавливаем состояние ожидания расшифровки
-            state_manager.set_data(user_id, "awaiting_transcription", True)
+        # Обновляем сообщение о статусе
+        await processing_message.edit_text(f"✅ Голосовое сообщение обработано:\n\n{transcription}")
         
     except Exception as e:
-        logger.error(f"Ошибка при обработке голосового сообщения: {str(e)}", exc_info=True)
-        await status_message.edit_text(f"❌ Произошла ошибка при обработке голосового сообщения: {str(e)}")
-        if 'tmp_path' in locals():
-            try:
-                os.unlink(tmp_path)
-            except:
-                pass
+        logging.error(f"Ошибка при обработке голосового сообщения: {e}")
+        await update.message.reply_text(f"❌ Произошла ошибка при обработке голосового сообщения: {e}")
 
 async def process_transcription(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обрабатывает расшифровку голосового сообщения, введенную пользователем"""
