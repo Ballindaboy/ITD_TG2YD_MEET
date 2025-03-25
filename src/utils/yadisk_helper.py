@@ -337,10 +337,10 @@ class YaDiskHelper:
                     logger.warning(f"Создание нового файла вместо обновления: {new_path}")
                     path = new_path
                 
-                # Загружаем на Яндекс.Диск без перезаписи при первой попытке, с перезаписью при повторе
-                overwrite_flag = retry_count > 0
-                logger.info(f"Запись в файл {path} (перезапись: {overwrite_flag})")
-                self.disk.upload(tmp_path, path, overwrite=overwrite_flag, timeout=60.0)
+                # Загружаем на Яндекс.Диск всегда с перезаписью, если файл существует
+                # overwrite_flag = retry_count > 0
+                logger.info(f"Запись в файл {path} (перезапись: True)")
+                self.disk.upload(tmp_path, path, overwrite=True, timeout=60.0)
                 
                 return True
             except Exception as e:
