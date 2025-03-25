@@ -198,11 +198,11 @@ def main() -> None:
         # Обработчик для завершения встречи
         application.add_handler(CommandHandler("end", end_session_and_show_summary))
         
+        # Обработчик кнопки "Добавить комментарий" - регистрируем перед общим обработчиком callback-запросов
+        application.add_handler(CallbackQueryHandler(handle_final_comment, pattern=r'add_final_comment'))
+        
         # Обработчик callback-запросов (нажатий на кнопки)
         application.add_handler(CallbackQueryHandler(handle_session_callback, pattern=r'^session_'))
-        
-        # Обработчик кнопки "Добавить комментарий"
-        application.add_handler(CallbackQueryHandler(handle_final_comment, pattern=r'^add_final_comment$'))
         
         # Добавляем обработчики текстовых сообщений
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))

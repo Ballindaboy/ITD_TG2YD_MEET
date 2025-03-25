@@ -528,10 +528,16 @@ async def end_session_and_show_summary(update: Update, context: ContextTypes.DEF
     state_manager.set_data(user_id, "last_session_txt_file", session.txt_file_path)
     state_manager.set_data(user_id, "last_session_summary", summary)
     
+    # Логируем сохраненные данные
+    logger.info(f"Сохранены данные о завершенной сессии для пользователя {user_id}. Путь к файлу: {session.txt_file_path}")
+    
     # Создаем клавиатуру для добавления комментария
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("✏️ Добавить комментарий", callback_data="add_final_comment")]
     ])
+    
+    # Логируем создание кнопки
+    logger.info(f"Создана кнопка для добавления комментария с callback_data='add_final_comment'")
     
     # Показываем сводку и предлагаем добавить комментарий
     if update.callback_query:
@@ -567,6 +573,9 @@ async def handle_final_comment(update: Update, context: ContextTypes.DEFAULT_TYP
     
     user_id = update.effective_user.id
     
+    # Логируем полученные данные для отладки
+    logger.info(f"Обработка callback для кнопки 'Добавить комментарий'. User ID: {user_id}, callback_data: {query.data}")
+    
     # Получаем данные пользователя
     user_data = get_user_data(user_id)
     user_name = ""
@@ -575,10 +584,15 @@ async def handle_final_comment(update: Update, context: ContextTypes.DEFAULT_TYP
         last_name = user_data.get('last_name', '')
         user_name = f"{first_name} {last_name}".strip()
     
+    # Логируем сохраненные данные
+    saved_data = state_manager.get_data(user_id, "last_session_txt_file")
+    logger.info(f"Сохраненный путь к файлу сессии: {saved_data}")
+    
     # Получаем путь к файлу последней завершенной сессии
     txt_file_path = state_manager.get_data(user_id, "last_session_txt_file")
     
     if not txt_file_path:
+        logger.error(f"Не найден путь к файлу последней сессии для пользователя {user_id}")
         await query.edit_message_text(
             text="❌ Не удалось найти информацию о завершенной сессии."
         )
@@ -655,9 +669,8 @@ async def switch_meeting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # Завершаем текущую сессию и показываем сводку
         await end_session_and_show_summary(update, context)
         
-        # Очищаем временные данные
-        state_manager.clear_data(user_id)
-        # Не вызываем clear_session, т.к. он уже вызывается в end_session_and_show_summary
+        # НЕ очищаем временные данные, так как они нужны для добавления комментария
+        # state_manager.clear_data(user_id)
     
     # Запускаем процесс создания новой встречи
     await update.message.reply_text(
